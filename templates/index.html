@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>あめ × じゃない方 シーシャオフ会</title>
+  <style>
+    :root{
+      --pink:#f7cfe1;
+      --pink2:#fff2f8;
+      --rose:#d96b9c;
+      --ink:#4a2f3d;
+      --line:#efb8d1;
+      --white:#fff;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Yu Gothic","Hiragino Kaku Gothic ProN",system-ui,sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at 10% 5%, rgba(255,255,255,.95) 0 7%, transparent 8%),
+        linear-gradient(180deg,#fff8fb 0%,#ffeef6 35%,#fff 100%);
+    }
+    .wrap{max-width:760px;margin:0 auto;padding:0 16px 48px}
+    .hero{
+      margin:0 -16px;
+      position:relative;
+      min-height:390px;
+      background:
+        linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,245,250,.78)),
+        url('hero.jpg') center/cover no-repeat;
+      overflow:hidden;
+    }
+    .hero:after{
+      content:"";position:absolute;inset:auto 0 0;height:120px;
+      background:linear-gradient(180deg,transparent,#fff6fa);
+    }
+    .hero-copy{
+      position:absolute;left:18px;right:18px;bottom:34px;z-index:2;
+      text-align:center;text-shadow:0 2px 12px rgba(255,255,255,.95)
+    }
+    .eyebrow{font-size:15px;letter-spacing:.12em;margin-bottom:8px}
+    h1{margin:0;font-size:clamp(34px,8vw,58px);line-height:1.06;font-weight:800}
+    .sub{font-size:22px;margin-top:10px;font-weight:700;color:var(--rose)}
+    .card{
+      background:rgba(255,255,255,.92);
+      border:1px solid var(--line);
+      border-radius:24px;
+      padding:22px;
+      margin-top:18px;
+      box-shadow:0 12px 30px rgba(183,104,143,.10);
+      backdrop-filter:blur(6px);
+    }
+    .headline{text-align:center;font-size:24px;font-weight:800;margin:2px 0 14px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .pill{
+      background:var(--pink2);border:1px solid var(--line);border-radius:18px;
+      padding:14px;text-align:center;
+    }
+    .pill b{display:block;font-size:22px;margin-top:4px}
+    .wide{grid-column:1/-1}
+    .note{
+      display:flex;gap:10px;align-items:flex-start;
+      background:#fff7fa;border:1px dashed var(--line);padding:14px 16px;border-radius:16px;
+      margin-top:14px;font-size:14px;line-height:1.7;
+    }
+    .cta{
+      display:block;width:100%;margin-top:20px;text-decoration:none;text-align:center;
+      background:linear-gradient(135deg,#ef8fbb,#d96b9c);
+      color:white;font-weight:800;font-size:21px;padding:17px 18px;border-radius:999px;
+      box-shadow:0 10px 20px rgba(217,107,156,.28);
+    }
+    .cta small{display:block;font-size:12px;font-weight:500;margin-top:4px;opacity:.9}
+    .footer{text-align:center;color:#9c7388;font-size:12px;margin-top:22px}
+    .sparkle{color:#ef8fbb}
+    @media(max-width:520px){
+      .hero{min-height:360px}
+      .grid{grid-template-columns:1fr 1fr}
+      .pill{padding:12px 8px}
+      .pill b{font-size:19px}
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">2026.10.18 / KAMEIDO</div>
+        <h1>あめ × じゃない方<br>シーシャオフ会</h1>
+        <div class="sub">まったりシーシャしよ？</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="headline">イベント概要 <span class="sparkle">♡</span></div>
+      <div class="grid">
+        <div class="pill"><span>DATE</span><b>2026/10/18</b></div>
+        <div class="pill"><span>PRICE</span><b>4,000円</b></div>
+        <div class="pill wide"><span>PLACE</span><b>亀戸シーシャ Eighty -80-</b></div>
+        <div class="pill"><span>CAPACITY</span><b>定員20名</b></div>
+        <div class="pill"><span>SHISHA</span><b>8台</b></div>
+        <div class="pill wide"><span>PHOTO</span><b>ツーショット写メも撮れます♡</b></div>
+      </div>
+
+      <div class="note">
+        <div>⚠️</div>
+        <div>
+          喫煙目的店のため、<b>20歳未満の方はご参加いただけません。</b><br>
+          当日は<b>身分証の提示が必須</b>です。確認できない場合はご入店いただけません。
+        </div>
+      </div>
+
+      <a class="cta" href="{{ url_for('apply') }}">
+        参加申し込みへ
+        <small>定員20名・先着受付</small>
+      </a>
+    </section>
+
+    <div class="footer">あめちゃん × じゃない方 / Shisha Meetup 2026</div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>入力内容の確認｜あめ × じゃない方 シーシャオフ会</title>
+  <style>
+    :root{--pink2:#fff2f8;--rose:#d96b9c;--rose2:#ef8fbb;--ink:#4a2f3d;--muted:#8f6d7e;--line:#efb8d1;--danger:#b33c69}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:"Yu Gothic","Hiragino Kaku Gothic ProN",system-ui,sans-serif;color:var(--ink);background:linear-gradient(180deg,#fff8fb 0%,#ffeef6 42%,#fff 100%);min-height:100vh}
+    .wrap{max-width:760px;margin:0 auto;padding:18px 16px 56px}
+    .back{display:inline-flex;color:var(--rose);text-decoration:none;font-weight:700;font-size:14px;margin:2px 0 14px}
+    .head{text-align:center;padding:8px 0 16px}
+    .eyebrow{font-size:13px;letter-spacing:.12em;color:var(--muted)}
+    h1{font-size:clamp(27px,7vw,42px);margin:8px 0 6px;line-height:1.2}
+    .sub{color:var(--rose);font-weight:800;font-size:18px}
+    .card{background:rgba(255,255,255,.95);border:1px solid var(--line);border-radius:24px;padding:22px;margin-top:16px;box-shadow:0 12px 30px rgba(183,104,143,.10)}
+    .title{text-align:center;font-size:21px;font-weight:800;margin:0 0 5px}
+    .caption{text-align:center;color:var(--muted);font-size:13px;line-height:1.7;margin:0 0 20px}
+    .rows{border-top:1px solid #f1d5e2}
+    .row{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:15px 4px;border-bottom:1px solid #f1d5e2;align-items:start}
+    .label{font-size:13px;color:var(--muted);font-weight:800}
+    .value{font-size:15px;font-weight:700;overflow-wrap:anywhere}
+    .notice{background:#fff7fa;border:1px dashed var(--line);border-radius:16px;padding:15px;margin-top:18px;font-size:13px;line-height:1.8}
+    .notice b{color:var(--danger)}
+    .buttons{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:20px}
+    .btn{display:flex;align-items:center;justify-content:center;min-height:54px;border-radius:999px;text-decoration:none;font-weight:800;font-size:16px;border:0;cursor:pointer}
+    .edit{background:#fff;color:var(--rose);border:1px solid var(--line)}
+    .next{background:linear-gradient(135deg,#ef8fbb,#d96b9c);color:#fff;box-shadow:0 10px 20px rgba(217,107,156,.28)}
+    .next small{font-size:11px;font-weight:500;display:block;opacity:.9}
+    .nextwrap{text-align:center}
+    .under{text-align:center;color:var(--muted);font-size:12px;line-height:1.7;margin-top:11px}
+    .empty{display:none;text-align:center;padding:30px 10px;color:var(--muted);line-height:1.8}
+    .footer{text-align:center;color:#9c7388;font-size:12px;margin-top:24px}
+    @media(max-width:520px){.wrap{padding:12px 12px 42px}.card{padding:18px 15px}.row{grid-template-columns:1fr;gap:5px}.buttons{grid-template-columns:1fr}.next{order:-1}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <a href="{{ url_for('apply') }}" class="back">← 入力画面に戻る</a>
+  <header class="head">
+    <div class="eyebrow">2026.10.18 / KAMEIDO</div>
+    <h1>入力内容の確認</h1>
+    <div class="sub">あめ × じゃない方 シーシャオフ会</div>
+  </header>
+
+  <section class="card" id="confirmCard">
+    <h2 class="title">この内容で大丈夫？ ♡</h2>
+    <p class="caption">入力内容をご確認ください。まだ申し込みは完了していません。</p>
+
+    <div id="rows" class="rows">
+      <div class="row"><div class="label">お名前</div><div class="value" id="cName"></div></div>
+      <div class="row"><div class="label">ハンドルネーム</div><div class="value" id="cHandle"></div></div>
+      <div class="row"><div class="label">メールアドレス</div><div class="value" id="cEmail"></div></div>
+      <div class="row"><div class="label">電話番号</div><div class="value" id="cPhone"></div></div>
+      <div class="row"><div class="label">X（Twitter）</div><div class="value" id="cXid"></div></div>
+    </div>
+
+    <div class="notice">
+      <b>20歳以上限定・身分証提示必須</b><br>
+      当日は年齢確認ができる公的な身分証を必ずお持ちください。
+    </div>
+
+    <div class="buttons">
+      <a href="{{ url_for('apply') }}" class="btn edit">修正する</a>
+      <button type="button" class="btn next" id="nextBtn">支払い方法の選択へ</button>
+    </div>
+    <div class="under">支払い方法を選択して次へ進んでください。</div>
+  </section>
+
+  <section class="card empty" id="emptyState">
+    入力情報が見つかりませんでした。<br>
+    <a href="{{ url_for('apply') }}">参加申し込み画面から入力してください。</a>
+  </section>
+
+  <div class="footer">あめちゃん × じゃない方 / Shisha Meetup 2026</div>
+</main>
+<script>
+  const raw = sessionStorage.getItem('shishaApplyData');
+  if (!raw) {
+    document.getElementById('confirmCard').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'block';
+  } else {
+    const d = JSON.parse(raw);
+    document.getElementById('cName').textContent = d.name || '—';
+    document.getElementById('cHandle').textContent = d.handle || '—';
+    document.getElementById('cEmail').textContent = d.email || '—';
+    document.getElementById('cPhone').textContent = d.phone || '—';
+    document.getElementById('cXid').textContent = d.xid || '未入力';
+  }
+
+  document.getElementById('nextBtn')?.addEventListener('click', () => {
+    location.href = '{{ url_for("payment") }}';
+  });
+</script>
+</body>
+</html>

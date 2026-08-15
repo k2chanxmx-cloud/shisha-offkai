@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>参加申し込み｜あめ × じゃない方 シーシャオフ会</title>
+  <style>
+    :root{
+      --pink:#f7cfe1;
+      --pink2:#fff2f8;
+      --rose:#d96b9c;
+      --rose2:#ef8fbb;
+      --ink:#4a2f3d;
+      --muted:#8f6d7e;
+      --line:#efb8d1;
+      --white:#fff;
+      --danger:#b33c69;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      font-family:"Yu Gothic","Hiragino Kaku Gothic ProN",system-ui,sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at 8% 3%, rgba(255,255,255,.95) 0 6%, transparent 7%),
+        linear-gradient(180deg,#fff8fb 0%,#ffeef6 40%,#fff 100%);
+    }
+    .wrap{max-width:760px;margin:0 auto;padding:18px 16px 56px}
+    .back{
+      display:inline-flex;align-items:center;gap:6px;color:var(--rose);text-decoration:none;
+      font-weight:700;font-size:14px;margin:2px 0 14px;
+    }
+    .head{text-align:center;padding:8px 0 16px}
+    .eyebrow{font-size:13px;letter-spacing:.12em;color:var(--muted)}
+    h1{font-size:clamp(27px,7vw,42px);line-height:1.2;margin:8px 0 6px}
+    .sub{color:var(--rose);font-weight:800;font-size:18px}
+    .mini{
+      display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:14px
+    }
+    .mini span{
+      background:#fff;border:1px solid var(--line);border-radius:999px;padding:8px 12px;
+      font-size:13px;box-shadow:0 5px 14px rgba(183,104,143,.08)
+    }
+    .card{
+      background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:24px;
+      padding:22px;margin-top:16px;box-shadow:0 12px 30px rgba(183,104,143,.10);
+    }
+    .section-title{font-size:21px;font-weight:800;margin:0 0 4px;text-align:center}
+    .section-caption{text-align:center;color:var(--muted);font-size:13px;line-height:1.7;margin-bottom:20px}
+    .field{margin:0 0 17px}
+    label{display:block;font-weight:800;font-size:14px;margin-bottom:7px}
+    .req{font-size:11px;background:#f18ab5;color:#fff;border-radius:999px;padding:2px 7px;margin-left:6px;vertical-align:1px}
+    .opt{font-size:11px;color:var(--muted);border:1px solid #dbc3ce;border-radius:999px;padding:2px 7px;margin-left:6px;vertical-align:1px}
+    input{
+      width:100%;border:1px solid #e7c2d3;background:#fffafd;border-radius:14px;
+      padding:14px 15px;font-size:16px;color:var(--ink);outline:none;transition:.2s;
+    }
+    input:focus{border-color:var(--rose2);box-shadow:0 0 0 3px rgba(239,143,187,.16);background:#fff}
+    input::placeholder{color:#c0a6b2}
+    .hint{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.6}
+    .notice{
+      background:#fff7fa;border:1px dashed var(--line);border-radius:16px;padding:15px;
+      font-size:13px;line-height:1.75;margin-bottom:18px
+    }
+    .checks{display:grid;gap:12px}
+    .check{
+      display:flex;align-items:flex-start;gap:10px;padding:13px 14px;background:#fffafd;
+      border:1px solid #efd0de;border-radius:15px;cursor:pointer;
+    }
+    .check input{width:20px;height:20px;margin:1px 0 0;accent-color:var(--rose)}
+    .check span{font-size:14px;line-height:1.65}
+    .check strong{color:var(--danger)}
+    .submit{
+      width:100%;border:0;margin-top:20px;border-radius:999px;padding:17px 18px;
+      font-size:19px;font-weight:800;color:#fff;background:linear-gradient(135deg,#ef8fbb,#d96b9c);
+      box-shadow:0 10px 20px rgba(217,107,156,.28);cursor:pointer;transition:.2s;
+    }
+    .submit:disabled{opacity:.42;box-shadow:none;cursor:not-allowed}
+    .submit:not(:disabled):active{transform:translateY(1px)}
+    .under{text-align:center;color:var(--muted);font-size:12px;line-height:1.7;margin-top:12px}
+    .footer{text-align:center;color:#9c7388;font-size:12px;margin-top:24px}
+    @media(max-width:520px){
+      .wrap{padding:12px 12px 42px}
+      .card{padding:18px 15px;border-radius:21px}
+      input{font-size:16px}
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <a href="{{ url_for('index') }}" class="back">← イベント概要に戻る</a>
+
+    <header class="head">
+      <div class="eyebrow">2026.10.18 / KAMEIDO</div>
+      <h1>参加申し込み</h1>
+      <div class="sub">あめ × じゃない方 シーシャオフ会</div>
+      <div class="mini">
+        <span>参加費 4,000円</span>
+        <span>定員20名</span>
+        <span>20歳以上限定</span>
+      </div>
+    </header>
+
+    <form id="applyForm" novalidate>
+      <section class="card">
+        <h2 class="section-title">お申し込み情報 ♡</h2>
+        <div class="section-caption">当日の受付・ご連絡に必要な情報をご入力ください。</div>
+
+        <div class="field">
+          <label for="name">お名前<span class="req">必須</span></label>
+          <input id="name" name="name" type="text" autocomplete="name" placeholder="例：山田 花子" required>
+          <div class="hint">身分証と照合できるお名前をご入力ください。</div>
+        </div>
+
+        <div class="field">
+          <label for="handle">ハンドルネーム<span class="req">必須</span></label>
+          <input id="handle" name="handle" type="text" placeholder="例：はなちゃん" required>
+          <div class="hint">当日の受付で確認しやすいお名前でお願いします。</div>
+        </div>
+
+        <div class="field">
+          <label for="email">メールアドレス<span class="req">必須</span></label>
+          <input id="email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="example@email.com" required>
+          <div class="hint">申込完了メールの送付先として使用します。</div>
+        </div>
+
+        <div class="field">
+          <label for="phone">電話番号<span class="req">必須</span></label>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="09012345678" required pattern="[0-9+() -]{9,18}">
+          <div class="hint">緊急時の連絡にのみ使用します。</div>
+        </div>
+
+        <div class="field">
+          <label for="xid">X（Twitter）アカウント<span class="opt">任意</span></label>
+          <input id="xid" name="xid" type="text" placeholder="@example">
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="section-title">注意事項の確認</h2>
+        <div class="section-caption">すべてご確認のうえ、チェックをお願いします。</div>
+
+        <div class="notice">
+          Eighty -80- は喫煙目的店です。ご参加には年齢確認が必要となります。
+          当日は、年齢を確認できる公的な身分証を必ずお持ちください。
+        </div>
+
+        <div class="checks">
+          <label class="check">
+            <input class="agree" type="checkbox" required>
+            <span>私は<strong>20歳以上</strong>です。</span>
+          </label>
+
+          <label class="check">
+            <input class="agree" type="checkbox" required>
+            <span>当日、年齢確認ができる<strong>身分証を提示</strong>します。提示できない場合は参加できないことを了承します。</span>
+          </label>
+
+          <label class="check">
+            <input class="agree" type="checkbox" required>
+            <span>無断キャンセルはせず、参加できなくなった場合は事前に連絡します。</span>
+          </label>
+
+          <label class="check">
+            <input class="agree" type="checkbox" required>
+            <span>申し込みに必要な範囲で入力した個人情報を利用することに同意します。</span>
+          </label>
+        </div>
+
+        <button id="submitBtn" class="submit" type="submit" disabled>入力内容を確認する</button>
+        <div class="under">入力内容を確認してから、次の画面へ進みます。</div>
+      </section>
+    </form>
+
+    <div class="footer">あめちゃん × じゃない方 / Shisha Meetup 2026</div>
+  </main>
+
+  <script>
+    const form = document.getElementById('applyForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const requiredFields = [...form.querySelectorAll('input[required]:not([type="checkbox"])')];
+    const checks = [...form.querySelectorAll('.agree')];
+
+    const saved = sessionStorage.getItem('shishaApplyData');
+    if (saved) {
+      try {
+        const d = JSON.parse(saved);
+        document.getElementById('name').value = d.name || '';
+        document.getElementById('handle').value = d.handle || '';
+        document.getElementById('email').value = d.email || '';
+        document.getElementById('phone').value = d.phone || '';
+        document.getElementById('xid').value = d.xid || '';
+      } catch(e) {}
+    }
+
+    function updateButton(){
+      const fieldsOK = requiredFields.every(el => el.value.trim() !== '' && el.checkValidity());
+      const checksOK = checks.every(el => el.checked);
+      submitBtn.disabled = !(fieldsOK && checksOK);
+    }
+
+    form.addEventListener('input', updateButton);
+    form.addEventListener('change', updateButton);
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+      const data = {
+        name: document.getElementById('name').value.trim(),
+        handle: document.getElementById('handle').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        phone: document.getElementById('phone').value.trim(),
+        xid: document.getElementById('xid').value.trim()
+      };
+      sessionStorage.setItem('shishaApplyData', JSON.stringify(data));
+      location.href = '{{ url_for("confirm") }}';
+    });
+
+    updateButton();
+  </script>
+</body>
+</html>
