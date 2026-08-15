@@ -1,67 +1,64 @@
-# あめ × じゃない方 シーシャオフ会 v6.2.1
+# あめ × じゃない方 シーシャオフ会 v6.3
 
-## 今回の追加
+## 今回の変更
 
-Stripe Webhookで決済成功後、
+Resendの認証済みドメイン `mail.shishaoffkai.com` を使い、
+決済完了後に **申込フォームへ入力された参加者本人のメールアドレス**
+へ自動メールを送信します。
 
-1. Supabaseを `paid` に更新
-2. 申込情報を取得
-3. Resendで決済完了メールを送信
-4. `email_sent_at` / `resend_email_id` をSupabaseへ保存
+送信元のデフォルト:
 
-まで自動処理します。
+`オフ会受付 <info@mail.shishaoffkai.com>`
 
-現在は独自ドメインがないため、Resendのテスト送信です。
-`onboarding@resend.dev` から、Resendアカウントに登録した
-自分のメールアドレスだけへ送信します。
+## 決済後の流れ
 
-## 先にSupabaseで実行
-
-`supabase_v6_2_migration.sql` をSQL Editorで実行してください。
-
-追加される列:
-
-- `email_sent_at`
-- `resend_email_id`
+1. Stripe Checkoutで4,000円決済
+2. Stripe Webhook `/webhook`
+3. Supabaseを `payment_status = paid` に更新
+4. 申込者のメールアドレスをSupabaseから取得
+5. Resendで参加者本人へ確認メール送信
+6. Supabaseへ `email_sent_at` / `resend_email_id` を保存
 
 ## Render Environment Variables
 
-既存:
+必要:
+
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `SUPABASE_URL`
 - `SUPABASE_SECRET_KEY`
 - `RESEND_API_KEY`
 
-今回追加:
-- `RESEND_TEST_EMAIL_TO`
-  - Resendアカウントに登録した自分のメールアドレス
-
 任意:
+
 - `RESEND_FROM`
-  - 未設定なら `オフ会受付 <onboarding@resend.dev>`
+  - 未設定時: `オフ会受付 <info@mail.shishaoffkai.com>`
 
-## テスト
+### 不要になった環境変数
 
-1. v6.2をGitHubへ上書き
+`RESEND_TEST_EMAIL_TO`
+
+v6.3では使用しません。Renderから削除して構いません。
+
+## テスト方法
+
+1. v6.3をGitHubへ上書き
 2. Render再デプロイ
-3. 新しく参加申込
-4. Stripe Sandboxで4,000円決済
-5. Render Logsで以下を確認
+3. 申込フォームには自分で受信できるメールアドレスを入力
+4. Stripe Sandboxで4,000円テスト決済
+5. Render Logsで
    - `POST /webhook ... 200`
    - `Payment confirmation email sent`
-6. 自分のメール受信箱を確認
+   を確認
+6. フォームに入力したメールアドレスへメールが届くことを確認
 7. Supabaseで
    - `payment_status = paid`
    - `email_sent_at` に日時
-   - `resend_email_id` にID
+   - `resend_email_id` に値
    を確認
 
-ResendのIdempotency-Keyも付けているので、
-Webhook再送による重複メールを抑止します。
+## 注意
 
-
-## v6.2.1 修正
-
-Resend APIへの直接HTTPリクエストに `User-Agent: shisha-offkai/1.0` を追加しました。
-これにより Resend の 403 / error code 1010 を回避します。
+現在Stripeはまだサンドボックスキー `sk_test_...` を使っているため、
+決済自体はテストです。
+本番公開前にStripe本番キー・本番Webhookへ切り替えてください。

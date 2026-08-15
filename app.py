@@ -13,8 +13,7 @@ app = Flask(__name__)
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-RESEND_TEST_EMAIL_TO = os.environ.get("RESEND_TEST_EMAIL_TO")
-RESEND_FROM = os.environ.get("RESEND_FROM", "オフ会受付 <onboarding@resend.dev>")
+RESEND_FROM = os.environ.get("RESEND_FROM", "オフ会受付 <info@mail.shishaoffkai.com>")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
@@ -61,17 +60,11 @@ def mark_application_paid(application_id, checkout_session):
 
 def send_payment_confirmation_email(application_id):
     """
-    Resendのテスト送信。
-    独自ドメイン未設定中は onboarding@resend.dev を使い、
-    RESEND_TEST_EMAIL_TO（Resend登録メール）へ送る。
+    決済完了後、申込フォームに入力されたメールアドレスへ
+    Resendから自動で確認メールを送信する。
     """
     if not RESEND_API_KEY:
         raise RuntimeError("RESEND_API_KEY が設定されていません。")
-    if not RESEND_TEST_EMAIL_TO:
-        raise RuntimeError(
-            "RESEND_TEST_EMAIL_TO が設定されていません。"
-            "Resendアカウントに登録したメールアドレスをRenderへ登録してください。"
-        )
 
     response = (
         supabase.table("event_applications")
@@ -89,14 +82,17 @@ def send_payment_confirmation_email(application_id):
 
     application = rows[0]
 
-    # すでに送信済みならスキップ
+    # Webhook再送などで既に送信済みなら重複送信しない
     if application.get("email_sent_at"):
         return application.get("resend_email_id")
 
     applicant_name = application.get("name") or application.get("handle") or "参加者"
-    applicant_email = application.get("email") or ""
+    applicant_email = (application.get("email") or "").strip()
 
-    subject = "【オフ会】お申し込み・お支払い完了のお知らせ"
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】お申し込み・お支払い完了のお知らせ"
 
     html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
@@ -110,6 +106,7 @@ def send_payment_confirmation_email(application_id):
         </div>
 
         <p>{applicant_name} 様</p>
+
         <p>
           シーシャオフ会へのお申し込みありがとうございます。<br>
           参加費 4,000円のお支払いを確認しました。
@@ -119,25 +116,34 @@ def send_payment_confirmation_email(application_id):
                     padding:18px;margin:22px 0;">
           <strong>開催日</strong><br>
           2026年10月18日<br><br>
+
           <strong>会場</strong><br>
           亀戸シーシャ Eighty -80-<br><br>
+
           <strong>参加費</strong><br>
           4,000円（お支払い済み）
         </div>
 
         <p>
           当日は喫煙目的店への入店となるため、
-          <strong>身分証明書を必ずお持ちください。</strong>
+          <strong>身分証明書を必ずお持ちください。</strong><br>
+          身分証をご提示いただけない場合はご参加いただけません。
         </p>
 
-        <p style="font-size:13px;color:#8f6d7e;">
-          【テスト送信】現在はResendのテスト環境のため、
-          実際の申込先メール（{applicant_email}）ではなく、
-          運営者のテスト用メールアドレスへ送信しています。
+        <p>
+          当日はシーシャ8台をご用意しています。<br>
+          ツーショット写メも撮影できます♡
         </p>
 
         <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
           まったりシーシャしよ？♡
+        </p>
+
+        <hr style="border:0;border-top:1px solid #f2c9db;margin:28px 0 18px;">
+
+        <p style="font-size:12px;color:#8f6d7e;margin:0;">
+          このメールは「あめ × じゃない方 シーシャオフ会」の
+          お申し込み・決済完了後に自動送信されています。
         </p>
       </div>
     </div>
@@ -145,7 +151,7 @@ def send_payment_confirmation_email(application_id):
 
     payload = {
         "from": RESEND_FROM,
-        "to": [RESEND_TEST_EMAIL_TO],
+        "to": [applicant_email],
         "subject": subject,
         "html": html,
     }
@@ -159,7 +165,6 @@ def send_payment_confirmation_email(application_id):
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
             "User-Agent": "shisha-offkai/1.0",
-            # Webhook再送時の重複メールを抑止
             "Idempotency-Key": f"shisha-paid-{application_id}",
         },
     )
