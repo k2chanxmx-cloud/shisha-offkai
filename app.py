@@ -1,5 +1,8 @@
 import os
+import json
 from datetime import datetime, timezone
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
 
 from flask import Flask, jsonify, redirect, render_template, request
 import stripe
@@ -9,6 +12,9 @@ app = Flask(__name__)
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+RESEND_TEST_EMAIL_TO = os.environ.get("RESEND_TEST_EMAIL_TO")
+RESEND_FROM = os.environ.get("RESEND_FROM", "オフ会受付 <onboarding@resend.dev>")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
@@ -51,6 +57,136 @@ def mark_application_paid(application_id, checkout_session):
         .eq("id", application_id)
         .execute()
     )
+
+
+def send_payment_confirmation_email(application_id):
+    """
+    Resendのテスト送信。
+    独自ドメイン未設定中は onboarding@resend.dev を使い、
+    RESEND_TEST_EMAIL_TO（Resend登録メール）へ送る。
+    """
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+    if not RESEND_TEST_EMAIL_TO:
+        raise RuntimeError(
+            "RESEND_TEST_EMAIL_TO が設定されていません。"
+            "Resendアカウントに登録したメールアドレスをRenderへ登録してください。"
+        )
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,name,handle,email,phone,x_account,payment_status,"
+            "email_sent_at,resend_email_id"
+        )
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("メール送信用の申込情報が見つかりません。")
+
+    application = rows[0]
+
+    # すでに送信済みならスキップ
+    if application.get("email_sent_at"):
+        return application.get("resend_email_id")
+
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = application.get("email") or ""
+
+    subject = "【オフ会】お申し込み・お支払い完了のお知らせ"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          お申し込みありがとうございます♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+        <p>
+          シーシャオフ会へのお申し込みありがとうございます。<br>
+          参加費 4,000円のお支払いを確認しました。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>開催日</strong><br>
+          2026年10月18日<br><br>
+          <strong>会場</strong><br>
+          亀戸シーシャ Eighty -80-<br><br>
+          <strong>参加費</strong><br>
+          4,000円（お支払い済み）
+        </div>
+
+        <p>
+          当日は喫煙目的店への入店となるため、
+          <strong>身分証明書を必ずお持ちください。</strong>
+        </p>
+
+        <p style="font-size:13px;color:#8f6d7e;">
+          【テスト送信】現在はResendのテスト環境のため、
+          実際の申込先メール（{applicant_email}）ではなく、
+          運営者のテスト用メールアドレスへ送信しています。
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [RESEND_TEST_EMAIL_TO],
+        "subject": subject,
+        "html": html,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            # Webhook再送時の重複メールを抑止
+            "Idempotency-Key": f"shisha-paid-{application_id}",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
+
+    resend_email_id = result.get("id")
+
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "email_sent_at": datetime.now(timezone.utc).isoformat(),
+                "resend_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
+        .execute()
+    )
+
+    return resend_email_id
 
 
 @app.get("/")
@@ -264,10 +400,17 @@ def stripe_webhook():
                     application_id,
                     checkout_session.get("id"),
                 )
+
+                resend_email_id = send_payment_confirmation_email(application_id)
+                app.logger.info(
+                    "Payment confirmation email sent: application=%s / resend=%s",
+                    application_id,
+                    resend_email_id,
+                )
             except Exception:
                 app.logger.exception("Webhook Supabase update failed")
-                # Stripeに再送してもらうため5xxを返す
-                return "Database update failed", 500
+                # DB更新またはメール送信に失敗した場合はStripeに再送してもらうため5xx
+                return "Post-payment processing failed", 500
 
     # 未処理イベントも正常受信として200を返す
     return jsonify(received=True), 200
