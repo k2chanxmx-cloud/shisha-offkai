@@ -186,7 +186,11 @@
       return;
     }
 if (checked.value === 'bank') {
-      alert('銀行振込は次のステップで振込先案内と申込完了処理を追加します。');
+      if (!applicationId) {
+        alert('申込情報が見つかりません。参加申し込みからやり直してください。');
+        return;
+      }
+      window.location.href = '{{ url_for("bank_transfer") }}?application_id=' + encodeURIComponent(applicationId);
       return;
     }
   });
