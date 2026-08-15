@@ -214,9 +214,16 @@
         handle: document.getElementById('handle').value.trim(),
         email: document.getElementById('email').value.trim(),
         phone: document.getElementById('phone').value.trim(),
-        xid: document.getElementById('xid').value.trim()
+        xid: document.getElementById('xid').value.trim(),
+        age_confirmed: checks[0].checked,
+        id_required_confirmed: checks[1].checked,
+        cancellation_confirmed: checks[2].checked,
+        privacy_confirmed: checks[3].checked
       };
       sessionStorage.setItem('shishaApplyData', JSON.stringify(data));
+      // 入力を変更して再申込した場合、以前の申込IDを使い回さない
+      sessionStorage.removeItem('shishaApplicationId');
+      sessionStorage.removeItem('shishaPaymentMethod');
       location.href = '{{ url_for("confirm") }}';
     });
 

@@ -159,6 +159,9 @@
     bank: '銀行振込'
   };
 
+  const applicationId = new URLSearchParams(location.search).get('application_id')
+    || sessionStorage.getItem('shishaApplicationId');
+
   const radios = [...document.querySelectorAll('input[name="payment"]')];
   const nextBtn = document.getElementById('nextBtn');
   const selectedBox = document.getElementById('selectedBox');
@@ -189,7 +192,11 @@
     if (!checked) return;
 
     if (checked.value === 'card') {
-      window.location.href = '{{ url_for("create_checkout_session") }}';
+      if (!applicationId) {
+        alert('申込情報が見つかりません。参加申し込みからやり直してください。');
+        return;
+      }
+      window.location.href = '{{ url_for("create_checkout_session") }}?application_id=' + encodeURIComponent(applicationId);
       return;
     }
 

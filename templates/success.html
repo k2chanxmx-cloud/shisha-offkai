@@ -207,17 +207,9 @@
         亀戸シーシャ Eighty -80-<br>
         参加費 4,000円
       </div>
-
-      {% if session_id %}
-      <div class="session">
-        <span class="session-label">Stripe Checkout Session</span>
-        <span class="session-id">{{ session_id }}</span>
-      </div>
-      {% endif %}
-
-      <p class="small">
-        現在はStripeサンドボックスでのテストです。<br>
-        次の段階で、申込情報の保存・入金済み判定・自動メールを接続します。
+<p class="small">
+        お申し込み情報とお支払いを確認しました。<br>
+        本番公開時には、このあと登録メールアドレスへ確認メールをお送りします。
       </p>
 
       <a class="button" href="{{ url_for('index') }}">TOPへ戻る</a>

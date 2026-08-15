@@ -89,8 +89,42 @@
     document.getElementById('cXid').textContent = d.xid || '未入力';
   }
 
-  document.getElementById('nextBtn')?.addEventListener('click', () => {
-    location.href = '{{ url_for("payment") }}';
+  document.getElementById('nextBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('nextBtn');
+    const raw = sessionStorage.getItem('shishaApplyData');
+    if (!raw) return;
+
+    // すでにこの申込を保存済みなら、重複登録せず支払い画面へ
+    const existingId = sessionStorage.getItem('shishaApplicationId');
+    if (existingId) {
+      location.href = '{{ url_for("payment") }}?application_id=' + encodeURIComponent(existingId);
+      return;
+    }
+
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '申し込み情報を保存中…';
+
+    try {
+      const data = JSON.parse(raw);
+      const res = await fetch('{{ url_for("api_create_application") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || '申込情報を保存できませんでした。');
+      }
+
+      sessionStorage.setItem('shishaApplicationId', result.application_id);
+      location.href = '{{ url_for("payment") }}?application_id=' + encodeURIComponent(result.application_id);
+    } catch (err) {
+      alert(err.message || '通信エラーが発生しました。もう一度お試しください。');
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   });
 </script>
 </body>
