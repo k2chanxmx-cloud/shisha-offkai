@@ -23,7 +23,7 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 EVENT_NAME = "あめ × じゃない方 シーシャオフ会"
-EVENT_PRICE = 4000
+EVENT_PRICE = 3500
 
 
 def require_supabase():
@@ -109,7 +109,7 @@ def send_payment_confirmation_email(application_id):
 
         <p>
           シーシャオフ会へのお申し込みありがとうございます。<br>
-          参加費 4,000円のお支払いを確認しました。
+          参加費 3,500円のお支払いを確認しました。
         </p>
 
         <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
@@ -121,7 +121,7 @@ def send_payment_confirmation_email(application_id):
           亀戸シーシャ Eighty -80-<br><br>
 
           <strong>参加費</strong><br>
-          4,000円（お支払い済み）
+          3,500円（お支払い済み）
         </div>
 
         <p>

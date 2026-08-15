@@ -91,7 +91,7 @@
     <div class="eyebrow">2026.10.18 / KAMEIDO</div>
     <h1>支払い方法の選択</h1>
     <div class="sub">あめ × じゃない方 シーシャオフ会</div>
-    <div class="price">参加費 4,000円</div>
+    <div class="price">参加費 3,500円</div>
   </header>
 
   <section class="card">
@@ -110,20 +110,7 @@
           <div class="radio"></div>
         </div>
       </label>
-
-      <label class="method">
-        <input type="radio" name="payment" value="paypay">
-        <div class="method-inner">
-          <div class="icon">📱</div>
-          <div class="text">
-            <div class="name">PayPay</div>
-            <div class="desc">PayPayで支払う方法です。</div>
-          </div>
-          <div class="radio"></div>
-        </div>
-      </label>
-
-      <label class="method">
+<label class="method">
         <input type="radio" name="payment" value="bank">
         <div class="method-inner">
           <div class="icon">🏦</div>
@@ -142,7 +129,7 @@
 
     <div class="note">
       ※ クレジットカードを選ぶとStripeのサンドボックス決済画面へ進みます。<br>
-      PayPayと銀行振込はこのあと順番に追加します。
+      銀行振込は次のステップで振込先案内と入金確認フローを追加します。
     </div>
 
     <button class="next" id="nextBtn" type="button" disabled>この支払い方法で進む</button>
@@ -155,7 +142,6 @@
 <script>
   const labels = {
     card: 'クレジットカード',
-    paypay: 'PayPay',
     bank: '銀行振込'
   };
 
@@ -199,14 +185,8 @@
       window.location.href = '{{ url_for("create_checkout_session") }}?application_id=' + encodeURIComponent(applicationId);
       return;
     }
-
-    if (checked.value === 'paypay') {
-      alert('PayPayはこのあとStripe Checkoutへ追加します。');
-      return;
-    }
-
-    if (checked.value === 'bank') {
-      alert('銀行振込はこのあと振込先案内を追加します。');
+if (checked.value === 'bank') {
+      alert('銀行振込は次のステップで振込先案内と申込完了処理を追加します。');
       return;
     }
   });
