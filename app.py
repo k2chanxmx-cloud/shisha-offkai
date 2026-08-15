@@ -25,6 +25,12 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
 EVENT_NAME = "あめ × じゃない方 シーシャオフ会"
 EVENT_PRICE = 3500
 
+BANK_NAME = "三菱UFJ銀行"
+BANK_BRANCH = "浦和支店"
+BANK_ACCOUNT_TYPE = "普通"
+BANK_ACCOUNT_NUMBER = "0347624"
+BANK_ACCOUNT_NAME = "トクノウマキ"
+
 
 def require_supabase():
     if supabase is None:
@@ -195,6 +201,127 @@ def send_payment_confirmation_email(application_id):
     return resend_email_id
 
 
+def send_bank_transfer_instruction_email(application_id):
+    """銀行振込を選択した申込者へ振込先案内メールを送信する。"""
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,name,handle,email,payment_method,payment_status,"
+            "bank_instruction_sent_at,bank_instruction_email_id"
+        )
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("銀行振込案内用の申込情報が見つかりません。")
+
+    application = rows[0]
+
+    if application.get("bank_instruction_sent_at"):
+        return application.get("bank_instruction_email_id")
+
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = (application.get("email") or "").strip()
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】銀行振込のご案内"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          お申し込みありがとうございます♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+        <p>
+          銀行振込でのお申し込みを受け付けました。<br>
+          参加費 <strong>3,500円</strong> を下記口座へお振り込みください。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>銀行名</strong><br>{BANK_NAME}<br><br>
+          <strong>支店名</strong><br>{BANK_BRANCH}<br><br>
+          <strong>口座種別</strong><br>{BANK_ACCOUNT_TYPE}<br><br>
+          <strong>口座番号</strong><br>{BANK_ACCOUNT_NUMBER}<br><br>
+          <strong>口座名義</strong><br>{BANK_ACCOUNT_NAME}<br><br>
+          <strong>お振込金額</strong><br>3,500円
+        </div>
+
+        <p>
+          お振込名義は、可能な限りお申し込み時のお名前と同じ名義でお願いいたします。<br>
+          入金確認後、改めてお支払い完了メールをお送りします。
+        </p>
+
+        <p style="font-size:13px;color:#8f6d7e;">
+          ※振込手数料が発生する場合はご負担をお願いいたします。<br>
+          ※入金確認にはお時間をいただく場合があります。
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [applicant_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
+            "Idempotency-Key": f"shisha-bank-{application_id}",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
+
+    resend_email_id = result.get("id")
+
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "bank_instruction_sent_at": datetime.now(timezone.utc).isoformat(),
+                "bank_instruction_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
+        .execute()
+    )
+
+    return resend_email_id
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -258,6 +385,63 @@ def api_create_application():
     except Exception as exc:
         app.logger.exception("application insert failed")
         return jsonify(error=f"申込情報の保存に失敗しました: {exc}"), 500
+
+
+@app.get("/bank-transfer")
+def bank_transfer():
+    try:
+        require_supabase()
+
+        application_id = (request.args.get("application_id") or "").strip()
+        if not application_id:
+            return "application_id がありません。参加申し込みからやり直してください。", 400
+
+        response = (
+            supabase.table("event_applications")
+            .select("id,email,payment_status,payment_method")
+            .eq("id", application_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return "申込情報が見つかりません。", 404
+
+        (
+            supabase.table("event_applications")
+            .update(
+                {
+                    "payment_method": "bank",
+                    "payment_status": "bank_transfer_pending",
+                    "bank_transfer_requested_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", application_id)
+            .execute()
+        )
+
+        email_error = None
+        try:
+            send_bank_transfer_instruction_email(application_id)
+        except Exception as exc:
+            app.logger.exception("bank transfer instruction email failed")
+            email_error = str(exc)
+
+        return render_template(
+            "bank_transfer.html",
+            application_id=application_id,
+            bank_name=BANK_NAME,
+            bank_branch=BANK_BRANCH,
+            bank_account_type=BANK_ACCOUNT_TYPE,
+            bank_account_number=BANK_ACCOUNT_NUMBER,
+            bank_account_name=BANK_ACCOUNT_NAME,
+            price=EVENT_PRICE,
+            email_error=email_error,
+        )
+
+    except Exception as exc:
+        app.logger.exception("bank transfer setup failed")
+        return f"銀行振込の受付処理に失敗しました: {exc}", 500
 
 
 @app.get("/create-checkout-session")
