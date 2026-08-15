@@ -158,6 +158,7 @@ def send_payment_confirmation_email(application_id):
         headers={
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
             # Webhook再送時の重複メールを抑止
             "Idempotency-Key": f"shisha-paid-{application_id}",
         },

@@ -1,4 +1,4 @@
-# あめ × じゃない方 シーシャオフ会 v6.2
+# あめ × じゃない方 シーシャオフ会 v6.2.1
 
 ## 今回の追加
 
@@ -59,3 +59,9 @@ Stripe Webhookで決済成功後、
 
 ResendのIdempotency-Keyも付けているので、
 Webhook再送による重複メールを抑止します。
+
+
+## v6.2.1 修正
+
+Resend APIへの直接HTTPリクエストに `User-Agent: shisha-offkai/1.0` を追加しました。
+これにより Resend の 403 / error code 1010 を回避します。
