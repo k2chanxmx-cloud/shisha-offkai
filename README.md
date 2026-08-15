@@ -103,3 +103,29 @@ v6.3では使用しません。Renderから削除して構いません。
 管理画面から銀行振込の入金確認ボタンを押すと、
 `bank_transfer_pending → paid` に変更し、
 参加者へ「入金確認完了メール」を自動送信する機能。
+
+
+## v6.6 運営管理画面
+
+追加URL:
+
+- `/admin/login`
+- `/admin`
+
+Render Environment Variablesに追加:
+
+- `ADMIN_PASSWORD`
+  - 管理画面へログインするための好きな強いパスワード
+- `FLASK_SECRET_KEY`
+  - セッション保護用の長いランダム文字列
+
+### 銀行振込の運用
+
+1. 銀行口座で3,500円の着金を確認
+2. `/admin` を開く
+3. 対象者の「入金確認済みにする」を押す
+4. Supabaseの `payment_status` が `paid`
+5. `paid_at` が記録
+6. 参加者本人へ「ご入金確認のお知らせ」を自動メール送信
+
+既存Supabaseテーブルで動作するため、v6.6用のSQL追加はありません。

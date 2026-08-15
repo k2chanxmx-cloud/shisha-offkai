@@ -1,19 +1,22 @@
 import os
+from functools import wraps
 import json
 from datetime import datetime, timezone
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
-from flask import Flask, jsonify, redirect, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 import stripe
 from supabase import create_client
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-change-me")
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 RESEND_FROM = os.environ.get("RESEND_FROM", "オフ会受付 <info@mail.shishaoffkai.com>")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
@@ -322,6 +325,125 @@ def send_bank_transfer_instruction_email(application_id):
     return resend_email_id
 
 
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return redirect(url_for("admin_login"))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def send_bank_payment_confirmation_email(application_id):
+    """銀行振込の入金確認後、参加者へ支払い完了メールを送信。"""
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+
+    response = (
+        supabase.table("event_applications")
+        .select("id,name,handle,email,payment_status,email_sent_at,resend_email_id")
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("申込情報が見つかりません。")
+
+    application = rows[0]
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = (application.get("email") or "").strip()
+
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】ご入金確認のお知らせ"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          ご入金を確認しました♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+        <p>
+          銀行振込での参加費 <strong>3,500円</strong> のご入金を確認しました。<br>
+          お申し込みは完了です。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>開催日</strong><br>
+          2026年10月18日<br><br>
+          <strong>会場</strong><br>
+          亀戸シーシャ Eighty -80-<br><br>
+          <strong>参加費</strong><br>
+          3,500円（お支払い済み）
+        </div>
+
+        <p>
+          当日は喫煙目的店への入店となるため、
+          <strong>身分証明書を必ずお持ちください。</strong>
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [applicant_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
+            "Idempotency-Key": f"shisha-bank-paid-{application_id}",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
+
+    resend_email_id = result.get("id")
+
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "email_sent_at": datetime.now(timezone.utc).isoformat(),
+                "resend_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
+        .execute()
+    )
+
+    return resend_email_id
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -604,6 +726,112 @@ def stripe_webhook():
 
     # 未処理イベントも正常受信として200を返す
     return jsonify(received=True), 200
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    error = None
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+
+        if not ADMIN_PASSWORD:
+            error = "ADMIN_PASSWORD がRenderに設定されていません。"
+        elif password == ADMIN_PASSWORD:
+            session["admin_logged_in"] = True
+            return redirect(url_for("admin_dashboard"))
+        else:
+            error = "パスワードが違います。"
+
+    return render_template("admin_login.html", error=error)
+
+
+@app.get("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect(url_for("admin_login"))
+
+
+@app.get("/admin")
+@admin_required
+def admin_dashboard():
+    require_supabase()
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,created_at,name,handle,email,payment_method,payment_status,"
+            "paid_at,bank_transfer_requested_at"
+        )
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    applications = response.data or []
+    bank_pending = [
+        row for row in applications
+        if row.get("payment_method") == "bank"
+        and row.get("payment_status") == "bank_transfer_pending"
+    ]
+
+    paid_count = sum(1 for row in applications if row.get("payment_status") == "paid")
+
+    return render_template(
+        "admin.html",
+        applications=applications,
+        bank_pending=bank_pending,
+        paid_count=paid_count,
+        total_count=len(applications),
+    )
+
+
+@app.post("/admin/bank/<application_id>/confirm")
+@admin_required
+def admin_confirm_bank_payment(application_id):
+    try:
+        require_supabase()
+
+        response = (
+            supabase.table("event_applications")
+            .select("id,payment_method,payment_status")
+            .eq("id", application_id)
+            .limit(1)
+            .execute()
+        )
+
+        rows = response.data or []
+        if not rows:
+            return redirect(url_for("admin_dashboard", error="not_found"))
+
+        application = rows[0]
+
+        if application.get("payment_method") != "bank":
+            return redirect(url_for("admin_dashboard", error="not_bank"))
+
+        if application.get("payment_status") == "paid":
+            return redirect(url_for("admin_dashboard", message="already_paid"))
+
+        paid_at = datetime.now(timezone.utc).isoformat()
+
+        (
+            supabase.table("event_applications")
+            .update(
+                {
+                    "payment_status": "paid",
+                    "paid_at": paid_at,
+                }
+            )
+            .eq("id", application_id)
+            .execute()
+        )
+
+        send_bank_payment_confirmation_email(application_id)
+
+        return redirect(url_for("admin_dashboard", message="paid"))
+
+    except Exception:
+        app.logger.exception("admin bank confirm failed")
+        return redirect(url_for("admin_dashboard", error="confirm_failed"))
 
 
 @app.get("/cancel")
