@@ -187,7 +187,21 @@
   nextBtn.addEventListener('click', () => {
     const checked = document.querySelector('input[name="payment"]:checked');
     if (!checked) return;
-    alert('支払い方法「' + labels[checked.value] + '」を選択しました。\\n次は実際の決済・振込処理を1つずつ接続していきます。');
+
+    if (checked.value === 'card') {
+      window.location.href = '{{ url_for("create_checkout_session") }}';
+      return;
+    }
+
+    if (checked.value === 'paypay') {
+      alert('PayPayはこのあとStripe Checkoutへ追加します。');
+      return;
+    }
+
+    if (checked.value === 'bank') {
+      alert('銀行振込はこのあと振込先案内を追加します。');
+      return;
+    }
   });
 
   update();
