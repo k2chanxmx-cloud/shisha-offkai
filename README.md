@@ -1,37 +1,39 @@
-# あめ × じゃない方 シーシャオフ会 v6
+# あめ × じゃない方 シーシャオフ会 v6.1
 
 今回の追加:
-- 申込フォーム情報をSupabaseへ保存
-- Supabaseの申込IDをStripe Checkoutの `client_reference_id` / metadata に設定
-- Stripe Checkout Session IDを申込レコードへ保存
-- Stripe成功画面でStripe APIを再確認し、テスト上は `paid` に更新
-- 成功画面から内部用Session ID表示を削除
+- Stripe Webhook `/webhook`
+- `Stripe-Signature` の署名検証
+- `checkout.session.completed` を受信
+- `client_reference_id` / metadata の申込IDでSupabaseレコードを特定
+- `payment_status == paid` のときだけ `paid` / `paid_at` を更新
+- WebhookのDB更新失敗時は500を返し、Stripeの再送対象にする
 
-## 先にSupabaseでやること
+## Render Environment Variables
 
-1. Supabaseでプロジェクトを作成
-2. SQL Editorで `supabase_schema.sql` を実行
-3. Render Environment Variables に以下を追加
+以下4つを登録します。
 
-- `SUPABASE_URL`
-- `SUPABASE_SECRET_KEY`
-
-`SUPABASE_SECRET_KEY` は `sb_secret_...` を使用してください。
-秘密鍵はGitHubへアップロードしないでください。
-
-既存:
 - `STRIPE_SECRET_KEY=sk_test_...`
+- `STRIPE_WEBHOOK_SECRET=whsec_...`
+- `SUPABASE_URL=https://....supabase.co`
+- `SUPABASE_SECRET_KEY=sb_secret_...`
 
-## Render
+秘密情報はGitHubへアップロードしないでください。
 
-Build Command:
-`pip install -r requirements.txt`
+## Stripe Sandbox Webhook
 
-Start Command:
-`gunicorn app:app`
+Endpoint:
+`https://shisha-offkai.onrender.com/webhook`
 
-## 次の段階
+Listen event:
+`checkout.session.completed`
 
-Stripe Webhookを追加して、決済後に成功ページへ戻らなかった場合でも
-必ず入金状態を `paid` に反映できるようにします。
-その後、申込完了メールを自動送信します。
+## テスト方法
+
+1. v6.1 をGitHubへアップロードしRenderを再デプロイ
+2. Stripe SandboxのWebhook画面で「テストイベントを送信する」
+3. Renderログで `POST /webhook ... 200` を確認
+4. 実際のテスト申込 → 4,000円Sandbox決済
+5. Supabaseで `payment_status = paid` を確認
+
+Webhookを使うため、決済後にユーザーがsuccess画面へ戻らなくても
+Stripeから通知を受信できればpaidに更新されます。

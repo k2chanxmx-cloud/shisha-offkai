@@ -8,6 +8,7 @@ from supabase import create_client
 app = Flask(__name__)
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
@@ -26,6 +27,30 @@ def require_supabase():
             "Supabase未設定です。RenderのEnvironment Variablesに "
             "SUPABASE_URL と SUPABASE_SECRET_KEY を登録してください。"
         )
+
+
+def mark_application_paid(application_id, checkout_session):
+    """Stripe決済成功をSupabaseへ反映。複数回呼ばれても同じ内容を更新する。"""
+    if not application_id:
+        return
+
+    payment_intent_id = getattr(checkout_session, "payment_intent", None)
+
+    update_data = {
+        "payment_status": "paid",
+        "stripe_checkout_session_id": checkout_session.id,
+        "paid_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if payment_intent_id:
+        update_data["stripe_payment_intent_id"] = payment_intent_id
+
+    (
+        supabase.table("event_applications")
+        .update(update_data)
+        .eq("id", application_id)
+        .execute()
+    )
 
 
 @app.get("/")
@@ -181,24 +206,71 @@ def success():
             # 次の段階でWebhookも追加し、購入者がこの画面へ戻らなくても
             # 入金状態を反映できるようにする。
             if application_id and checkout_session.payment_status == "paid":
-                payment_intent_id = checkout_session.payment_intent
-                (
-                    supabase.table("event_applications")
-                    .update(
-                        {
-                            "payment_status": "paid",
-                            "stripe_checkout_session_id": checkout_session.id,
-                            "stripe_payment_intent_id": payment_intent_id,
-                            "paid_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                    )
-                    .eq("id", application_id)
-                    .execute()
-                )
+                mark_application_paid(application_id, checkout_session)
         except Exception:
             app.logger.exception("success verification failed")
 
     return render_template("success.html")
+
+
+@app.post("/webhook")
+def stripe_webhook():
+    """
+    StripeからのWebhookを署名検証して受信。
+    checkout.session.completed のうち payment_status == paid の場合のみ
+    申込レコードを paid に更新する。
+    """
+    if not STRIPE_WEBHOOK_SECRET:
+        app.logger.error("STRIPE_WEBHOOK_SECRET is not configured")
+        return "Webhook secret is not configured", 500
+
+    try:
+        require_supabase()
+    except Exception:
+        app.logger.exception("Supabase is not configured")
+        return "Supabase is not configured", 500
+
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=STRIPE_WEBHOOK_SECRET,
+        )
+    except ValueError:
+        app.logger.warning("Invalid webhook payload")
+        return "Invalid payload", 400
+    except stripe.error.SignatureVerificationError:
+        app.logger.warning("Invalid Stripe webhook signature")
+        return "Invalid signature", 400
+
+    if event["type"] == "checkout.session.completed":
+        checkout_session = event["data"]["object"]
+
+        application_id = (
+            checkout_session.get("client_reference_id")
+            or (checkout_session.get("metadata") or {}).get("application_id")
+        )
+
+        # カード決済ではcompleted時点でpaidになる。
+        # 支払状態を再確認し、未払いならDBをpaidにしない。
+        if application_id and checkout_session.get("payment_status") == "paid":
+            try:
+                mark_application_paid(application_id, checkout_session)
+                app.logger.info(
+                    "Webhook paid application updated: %s / session: %s",
+                    application_id,
+                    checkout_session.get("id"),
+                )
+            except Exception:
+                app.logger.exception("Webhook Supabase update failed")
+                # Stripeに再送してもらうため5xxを返す
+                return "Database update failed", 500
+
+    # 未処理イベントも正常受信として200を返す
+    return jsonify(received=True), 200
 
 
 @app.get("/cancel")
