@@ -27,6 +27,7 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
 
 EVENT_NAME = "あめ × じゃない方 シーシャオフ会"
 EVENT_PRICE = 3500
+EVENT_CAPACITY = 20
 
 BANK_NAME = "三菱UFJ銀行"
 BANK_BRANCH = "浦和支店"
@@ -444,14 +445,46 @@ def send_bank_payment_confirmation_email(application_id):
     return resend_email_id
 
 
+
+def get_capacity_status():
+    """paid + bank_transfer_pending を参加枠として数える。"""
+    require_supabase()
+    url = f"{SUPABASE_URL}/rest/v1/event_applications"
+    params = urllib_parse.urlencode({
+        "select": "id,payment_status",
+        "payment_status": "in.(paid,bank_transfer_pending)",
+    })
+    req = urllib_request.Request(
+        f"{url}?{params}",
+        headers={
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+        },
+        method="GET",
+    )
+    with urllib_request.urlopen(req, timeout=20) as resp:
+        rows = json.loads(resp.read().decode("utf-8") or "[]")
+    reserved = len(rows)
+    return {
+        "capacity": EVENT_CAPACITY,
+        "reserved_count": reserved,
+        "remaining": max(EVENT_CAPACITY - reserved, 0),
+        "is_full": reserved >= EVENT_CAPACITY,
+    }
+
+
 @app.get("/")
 def index():
-    return render_template("index.html")
+    capacity = get_capacity_status()
+    return render_template("index.html", capacity=capacity)
 
 
 @app.get("/apply")
 def apply():
-    return render_template("apply.html")
+    capacity = get_capacity_status()
+    if capacity["is_full"]:
+        return render_template("full.html", capacity=capacity)
+    return render_template("apply.html", capacity=capacity)
 
 
 @app.get("/confirm")
@@ -468,6 +501,12 @@ def payment():
 def api_create_application():
     try:
         require_supabase()
+        capacity = get_capacity_status()
+        if capacity["is_full"]:
+            return jsonify(
+                error="定員20名に達したため、受付を終了しました。",
+                full=True
+            ), 409
         data = request.get_json(silent=True) or {}
 
         required_text = ["name", "handle", "email", "phone"]
@@ -775,6 +814,11 @@ def admin_dashboard():
     ]
 
     paid_count = sum(1 for row in applications if row.get("payment_status") == "paid")
+    reserved_count = sum(
+        1 for row in applications
+        if row.get("payment_status") in ("paid", "bank_transfer_pending")
+    )
+    remaining_count = max(EVENT_CAPACITY - reserved_count, 0)
 
     return render_template(
         "admin.html",
@@ -782,6 +826,9 @@ def admin_dashboard():
         bank_pending=bank_pending,
         paid_count=paid_count,
         total_count=len(applications),
+        reserved_count=reserved_count,
+        remaining_count=remaining_count,
+        event_capacity=EVENT_CAPACITY,
     )
 
 

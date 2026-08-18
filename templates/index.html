@@ -118,6 +118,17 @@
     </section>
 
     <div class="footer">あめちゃん × じゃない方 / Shisha Meetup 2026</div>
-  </main>
+  
+    <div style="margin:18px 0;padding:16px;border:1px solid #efb8d1;border-radius:18px;background:#fff;text-align:center;">
+      {% if capacity.is_full %}
+        <div style="font-size:22px;font-weight:800;color:#d96b9c;">満員御礼</div>
+        <div style="margin-top:5px;color:#8f6d7e;font-size:13px;">定員20名に達したため、受付を終了しました。</div>
+      {% else %}
+        <div style="color:#8f6d7e;font-size:13px;">定員 {{ capacity.capacity }}名</div>
+        <div style="font-size:27px;font-weight:800;color:#d96b9c;">残り {{ capacity.remaining }}名</div>
+      {% endif %}
+    </div>
+
+</main>
 </body>
 </html>

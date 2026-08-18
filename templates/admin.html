@@ -53,7 +53,9 @@ th{color:var(--muted);font-size:11px}
   {% endif %}
 
   <section class="stats">
-    <div class="stat"><span>申込件数</span><b>{{ total_count }}</b></div>
+    <div class="stat"><span>申込レコード</span><b>{{ total_count }}</b></div>
+    <div class="stat"><span>参加確定・確保</span><b>{{ reserved_count }} / {{ event_capacity }}</b></div>
+    <div class="stat"><span>残り</span><b>{{ remaining_count }}</b></div>
     <div class="stat"><span>入金済み</span><b>{{ paid_count }}</b></div>
     <div class="stat"><span>銀行振込待ち</span><b>{{ bank_pending|length }}</b></div>
   </section>
