@@ -30,6 +30,20 @@ th{color:var(--muted);font-size:11px}
 .paid{background:#eaf8ef;color:#357451}.pending-b{background:#fff1dc;color:#936126}.unpaid{background:#f4f0f2;color:#755b67}
 .alert{margin-top:14px;padding:12px;border-radius:14px;background:#effaf2;color:#357451;font-size:13px}
 .error{background:#fff0f0;color:#a34444}
+.detail-btn{border:1px solid var(--line);background:#fff;color:var(--rose);border-radius:999px;padding:7px 11px;font-weight:800;font-size:12px;cursor:pointer}
+.detail-btn:hover{background:#fff2f8}
+dialog{width:min(560px,calc(100% - 28px));border:1px solid var(--line);border-radius:22px;padding:0;box-shadow:0 24px 70px rgba(74,47,61,.22);color:var(--ink)}
+dialog::backdrop{background:rgba(74,47,61,.38)}
+.detail-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid #f3dde7}
+.detail-head h3{margin:0;font-size:20px}
+.detail-close{border:0;background:#fff2f8;color:var(--rose);width:38px;height:38px;border-radius:50%;font-size:22px;cursor:pointer}
+.detail-body{padding:18px 20px 22px}
+.detail-grid{display:grid;grid-template-columns:130px 1fr;gap:0}
+.detail-label,.detail-value{padding:11px 0;border-bottom:1px solid #f5e3eb}
+.detail-label{font-size:12px;color:var(--muted);font-weight:800}
+.detail-value{font-size:14px;overflow-wrap:anywhere}
+.detail-value a{color:var(--rose);text-decoration:none}
+@media(max-width:620px){.detail-grid{grid-template-columns:105px 1fr}}
 @media(max-width:620px){.stats{grid-template-columns:1fr 1fr}.stat:last-child{grid-column:1/-1}.person-head{display:block}.confirm{width:100%;margin-top:12px}}
 </style>
 </head>
@@ -87,7 +101,7 @@ th{color:var(--muted);font-size:11px}
     <h2>すべての申込 <small style="font-size:12px;color:var(--muted);font-weight:400;">（全{{ total_count }}件）</small></h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>名前</th><th>ハンドル</th><th>支払方法</th><th>状態</th><th>申込日時</th><th>入金日時</th></tr></thead>
+        <thead><tr><th>名前</th><th>ハンドル</th><th>支払方法</th><th>状態</th><th>申込日時</th><th>入金日時</th><th>詳細</th></tr></thead>
         <tbody>
         {% for row in applications %}
           <tr>
@@ -105,12 +119,115 @@ th{color:var(--muted);font-size:11px}
             </td>
             <td>{{ row.created_at|jst }}</td>
             <td>{{ row.paid_at|jst }}</td>
+            <td>
+              <button
+                type="button"
+                class="detail-btn"
+                data-id="{{ row.id }}"
+                data-name="{{ row.name|e }}"
+                data-handle="{{ row.handle|e }}"
+                data-email="{{ row.email|default('', true)|e }}"
+                data-phone="{{ row.phone|default('', true)|e }}"
+                data-x="{{ row.x_account|default('', true)|e }}"
+                data-method="{{ row.payment_method|default('', true)|e }}"
+                data-status="{{ row.payment_status|default('', true)|e }}"
+                data-created="{{ row.created_at|jst }}"
+                data-paid="{{ row.paid_at|jst }}"
+                data-bank-requested="{{ row.bank_transfer_requested_at|jst }}"
+              >詳細を見る</button>
+            </td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
+
+  <dialog id="application-detail-dialog">
+    <div class="detail-head">
+      <h3>申込者詳細</h3>
+      <button type="button" class="detail-close" aria-label="閉じる">×</button>
+    </div>
+    <div class="detail-body">
+      <div class="detail-grid">
+        <div class="detail-label">名前</div><div class="detail-value" id="detail-name">-</div>
+        <div class="detail-label">ハンドル</div><div class="detail-value" id="detail-handle">-</div>
+        <div class="detail-label">メール</div><div class="detail-value" id="detail-email">-</div>
+        <div class="detail-label">電話番号</div><div class="detail-value" id="detail-phone">-</div>
+        <div class="detail-label">X / Twitter ID</div><div class="detail-value" id="detail-x">-</div>
+        <div class="detail-label">支払方法</div><div class="detail-value" id="detail-method">-</div>
+        <div class="detail-label">状態</div><div class="detail-value" id="detail-status">-</div>
+        <div class="detail-label">申込日時</div><div class="detail-value" id="detail-created">-</div>
+        <div class="detail-label">入金日時</div><div class="detail-value" id="detail-paid">-</div>
+        <div class="detail-label">銀行振込選択日時</div><div class="detail-value" id="detail-bank-requested">-</div>
+        <div class="detail-label">申込ID</div><div class="detail-value" id="detail-id">-</div>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+  (() => {
+    const dialog = document.getElementById('application-detail-dialog');
+    const closeButton = dialog.querySelector('.detail-close');
+
+    const valueOrDash = (value) => value && value !== 'None' ? value : '-';
+    const paymentLabel = (value) => {
+      if (value === 'card') return 'クレジットカード';
+      if (value === 'bank') return '銀行振込';
+      return valueOrDash(value);
+    };
+    const statusLabel = (value) => {
+      const labels = {
+        paid: '入金済み',
+        bank_transfer_pending: '銀行振込待ち',
+        pending: 'pending',
+        unpaid: 'unpaid',
+        refunded: '返金済み',
+        failed: '失敗'
+      };
+      return labels[value] || valueOrDash(value);
+    };
+
+    document.querySelectorAll('.detail-btn').forEach((button) => {
+      button.addEventListener('click', () => {
+        const d = button.dataset;
+        document.getElementById('detail-name').textContent = valueOrDash(d.name);
+        document.getElementById('detail-handle').textContent = valueOrDash(d.handle);
+
+        const emailEl = document.getElementById('detail-email');
+        emailEl.textContent = valueOrDash(d.email);
+
+        const phoneEl = document.getElementById('detail-phone');
+        phoneEl.textContent = valueOrDash(d.phone);
+
+        const xEl = document.getElementById('detail-x');
+        xEl.textContent = valueOrDash(d.x);
+
+        document.getElementById('detail-method').textContent = paymentLabel(d.method);
+        document.getElementById('detail-status').textContent = statusLabel(d.status);
+        document.getElementById('detail-created').textContent = valueOrDash(d.created);
+        document.getElementById('detail-paid').textContent = valueOrDash(d.paid);
+        document.getElementById('detail-bank-requested').textContent = valueOrDash(d.bankRequested);
+        document.getElementById('detail-id').textContent = valueOrDash(d.id);
+
+        dialog.showModal();
+      });
+    });
+
+    closeButton.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => {
+      const rect = dialog.getBoundingClientRect();
+      const inside = (
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      );
+      if (!inside) dialog.close();
+    });
+  })();
+  </script>
+
 </main>
 </body>
 </html>

@@ -840,8 +840,8 @@ def admin_dashboard():
     response = (
         supabase.table("event_applications")
         .select(
-            "id,created_at,name,handle,email,payment_method,payment_status,"
-            "paid_at,bank_transfer_requested_at"
+            "id,created_at,name,handle,email,phone,x_account,"
+            "payment_method,payment_status,paid_at,bank_transfer_requested_at"
         )
         .order("created_at", desc=True)
         .execute()
