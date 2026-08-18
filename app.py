@@ -1,254 +1,930 @@
-
 import os
+from functools import wraps
 import json
-from datetime import date, datetime
-from flask import Flask, render_template, request, jsonify
-from supabase import create_client, Client
-from openai import OpenAI
+import urllib.parse
+from datetime import datetime, timezone, date
+from zoneinfo import ZoneInfo
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
+
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+import stripe
+from supabase import create_client
 
 app = Flask(__name__)
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+@app.template_filter("jst")
+def format_jst(value):
+    """Supabase等のISO 8601日時を日本時間 YYYY/MM/DD HH:MM で表示する。"""
+    if value is None or value == "":
+        return "-"
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%Y/%m/%d %H:%M")
+    except Exception:
+        return str(value)
 
-supabase: Client | None = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-change-me")
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+RESEND_FROM = os.environ.get("RESEND_FROM", "オフ会受付 <info@mail.shishaoffkai.com>")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
-MEAL_ORDER = {"朝食": 1, "昼食": 2, "夕飯": 3, "夜食": 4, "間食": 5}
-EXERCISES = ["腹筋", "腹斜筋", "スクワット", "ジム", "パーソナル"]
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 
+supabase = None
+if SUPABASE_URL and SUPABASE_SECRET_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
-def ensure_db():
-    if not supabase:
-        raise RuntimeError("Supabaseの環境変数が設定されていません。")
+EVENT_NAME = "あめ × じゃない方 シーシャオフ会"
+EVENT_PRICE = 3500
+EVENT_CAPACITY = 20
+BANK_TRANSFER_DEADLINE = date(2026, 10, 1)
+BANK_TRANSFER_DEADLINE_TEXT = "2026年10月1日"
 
-
-def safe_rows(resp):
-    return getattr(resp, "data", None) or []
-
-
-@app.route("/")
-def index():
-    selected_date = request.args.get("date") or date.today().isoformat()
-    return render_template(
-        "index.html",
-        selected_date=selected_date,
-        meal_types=list(MEAL_ORDER.keys()),
-        exercises=EXERCISES,
-    )
-
-
-@app.get("/api/day/<selected_date>")
-def get_day(selected_date):
-    ensure_db()
-
-    daily = safe_rows(
-        supabase.table("daily_logs").select("*").eq("log_date", selected_date).limit(1).execute()
-    )
-    meals = safe_rows(
-        supabase.table("meal_logs").select("*").eq("log_date", selected_date).execute()
-    )
-    exercises = safe_rows(
-        supabase.table("exercise_logs").select("*").eq("log_date", selected_date).execute()
-    )
-    soreness = safe_rows(
-        supabase.table("muscle_soreness_logs").select("*").eq("log_date", selected_date).execute()
-    )
-
-    meals.sort(key=lambda r: (MEAL_ORDER.get(r.get("meal_type", ""), 99), r.get("id", 0)))
-    return jsonify({
-        "daily": daily[0] if daily else None,
-        "meals": meals,
-        "exercises": exercises,
-        "soreness": soreness
-    })
+BANK_NAME = "三菱UFJ銀行"
+BANK_BRANCH = "浦和支店"
+BANK_ACCOUNT_TYPE = "普通"
+BANK_ACCOUNT_NUMBER = "0347624"
+BANK_ACCOUNT_NAME = "トクノウマキ"
 
 
-@app.post("/api/day")
-def save_day():
-    ensure_db()
-    payload = request.get_json(force=True)
-    selected_date = payload["date"]
-    weight = payload.get("weight")
-    meals = payload.get("meals", [])
-    exercises = payload.get("exercises", [])
-    soreness = payload.get("soreness", [])
+def require_supabase():
+    if supabase is None:
+        raise RuntimeError(
+            "Supabase未設定です。RenderのEnvironment Variablesに "
+            "SUPABASE_URL と SUPABASE_SECRET_KEY を登録してください。"
+        )
 
-    # Upsert daily log
-    daily_payload = {
-        "log_date": selected_date,
-        "weight": float(weight) if weight not in (None, "") else None,
-        "updated_at": datetime.utcnow().isoformat()
+
+def mark_application_paid(application_id, checkout_session):
+    """Stripe決済成功をSupabaseへ反映。複数回呼ばれても同じ内容を更新する。"""
+    if not application_id:
+        return
+
+    payment_intent_id = getattr(checkout_session, "payment_intent", None)
+
+    update_data = {
+        "payment_status": "paid",
+        "stripe_checkout_session_id": checkout_session.id,
+        "paid_at": datetime.now(timezone.utc).isoformat(),
     }
-    existing = safe_rows(
-        supabase.table("daily_logs").select("id").eq("log_date", selected_date).limit(1).execute()
-    )
-    if existing:
-        supabase.table("daily_logs").update(daily_payload).eq("id", existing[0]["id"]).execute()
-    else:
-        supabase.table("daily_logs").insert(daily_payload).execute()
 
-    # Replace child rows for this date
-    supabase.table("meal_logs").delete().eq("log_date", selected_date).execute()
-    supabase.table("exercise_logs").delete().eq("log_date", selected_date).execute()
-    supabase.table("muscle_soreness_logs").delete().eq("log_date", selected_date).execute()
+    if payment_intent_id:
+        update_data["stripe_payment_intent_id"] = payment_intent_id
 
-    meal_rows = []
-    for m in meals:
-        text = (m.get("meal_text") or "").strip()
-        meal_type = m.get("meal_type") or "朝食"
-        vomited = bool(m.get("vomited"))
-        if text or vomited:
-            meal_rows.append({
-                "log_date": selected_date,
-                "meal_type": meal_type,
-                "meal_text": text,
-                "vomited": vomited
-            })
-    if meal_rows:
-        supabase.table("meal_logs").insert(meal_rows).execute()
-
-    exercise_rows = []
-    for e in exercises:
-        etype = e.get("exercise_type")
-        if etype in EXERCISES and e.get("done"):
-            exercise_rows.append({
-                "log_date": selected_date,
-                "exercise_type": etype,
-                "memo": (e.get("memo") or "").strip()
-            })
-    if exercise_rows:
-        supabase.table("exercise_logs").insert(exercise_rows).execute()
-
-    soreness_rows = [
-        {"log_date": selected_date, "muscle_name": str(x).strip()}
-        for x in soreness if str(x).strip()
-    ]
-    if soreness_rows:
-        supabase.table("muscle_soreness_logs").insert(soreness_rows).execute()
-
-    return jsonify({"ok": True})
-
-
-@app.post("/api/ai-comment")
-def ai_comment():
-    ensure_db()
-    if not client:
-        return jsonify({"error": "OPENAI_API_KEY が設定されていません。"}), 400
-
-    payload = request.get_json(force=True)
-    selected_date = payload["date"]
-
-    daily = safe_rows(
-        supabase.table("daily_logs").select("*").eq("log_date", selected_date).limit(1).execute()
-    )
-    meals = safe_rows(
-        supabase.table("meal_logs").select("*").eq("log_date", selected_date).execute()
-    )
-    exercises = safe_rows(
-        supabase.table("exercise_logs").select("*").eq("log_date", selected_date).execute()
-    )
-    soreness = safe_rows(
-        supabase.table("muscle_soreness_logs").select("*").eq("log_date", selected_date).execute()
+    (
+        supabase.table("event_applications")
+        .update(update_data)
+        .eq("id", application_id)
+        .execute()
     )
 
-    previous_weight = None
-    prev = safe_rows(
-        supabase.table("daily_logs")
-        .select("weight,log_date")
-        .lt("log_date", selected_date)
-        .not_.is_("weight", "null")
-        .order("log_date", desc=True)
+
+def send_payment_confirmation_email(application_id):
+    """
+    決済完了後、申込フォームに入力されたメールアドレスへ
+    Resendから自動で確認メールを送信する。
+    """
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,name,handle,email,phone,x_account,payment_status,"
+            "email_sent_at,resend_email_id"
+        )
+        .eq("id", application_id)
         .limit(1)
         .execute()
     )
-    if prev:
-        previous_weight = prev[0].get("weight")
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("メール送信用の申込情報が見つかりません。")
 
-    summary = {
-        "date": selected_date,
-        "weight": daily[0].get("weight") if daily else None,
-        "previous_weight": previous_weight,
-        "meals": [
-            {
-                "type": m.get("meal_type"),
-                "food": m.get("meal_text"),
-                "vomited": bool(m.get("vomited")),
-            }
-            for m in meals
-        ],
-        "exercises": [e.get("exercise_type") for e in exercises],
-        "exercise_memos": [e.get("memo") for e in exercises if e.get("memo")],
-        "muscle_soreness": [s.get("muscle_name") for s in soreness],
+    application = rows[0]
+
+    # Webhook再送などで既に送信済みなら重複送信しない
+    if application.get("email_sent_at"):
+        return application.get("resend_email_id")
+
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = (application.get("email") or "").strip()
+
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】お申し込み・お支払い完了のお知らせ"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          お申し込みありがとうございます♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+
+        <p>
+          シーシャオフ会へのお申し込みありがとうございます。<br>
+          参加費 3,500円のお支払いを確認しました。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>開催日</strong><br>
+          2026年10月18日<br><br>
+
+          <strong>会場</strong><br>
+          亀戸シーシャ Eighty -80-<br><br>
+
+          <strong>参加費</strong><br>
+          3,500円（お支払い済み）
+        </div>
+
+        <p>
+          当日は喫煙目的店への入店となるため、
+          <strong>身分証明書を必ずお持ちください。</strong><br>
+          身分証をご提示いただけない場合はご参加いただけません。
+        </p>
+
+        <p>
+          当日はシーシャ8台をご用意しています。<br>
+          ツーショット写メも撮影できます♡
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+
+        <hr style="border:0;border-top:1px solid #f2c9db;margin:28px 0 18px;">
+
+        <p style="font-size:12px;color:#8f6d7e;margin:0;">
+          このメールは「あめ × じゃない方 シーシャオフ会」の
+          お申し込み・決済完了後に自動送信されています。
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [applicant_email],
+        "subject": subject,
+        "html": html,
     }
 
-    system = """
-あなたは日々の体重・食事・運動・筋肉痛を見守る、クールで少しぶっきらぼうだが優しいキャラクターです。
-日本語で80〜160文字程度、1〜3文でコメントしてください。
-褒めすぎず、説教臭くせず、その日の記録に具体的に触れてください。
-嘔吐の記録がある場合、摂取カロリーが減った・帳消しになった等の表現は絶対にしないでください。
-嘔吐がある日は、体調への配慮、水分補給、続く場合は医療機関への相談を穏やかに促してください。
-体重の数値だけで価値判断をしないでください。
-運動と筋肉痛が同じ部位に関係しそうな場合は、休養や無理をしないことを勧めてください。
-"""
-
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        instructions=system,
-        input=json.dumps(summary, ensure_ascii=False)
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
+            "Idempotency-Key": f"shisha-paid-{application_id}",
+        },
     )
-    comment = (response.output_text or "").strip()
 
-    existing = safe_rows(
-        supabase.table("daily_logs").select("id").eq("log_date", selected_date).limit(1).execute()
-    )
-    if existing:
-        supabase.table("daily_logs").update({"ai_comment": comment}).eq("id", existing[0]["id"]).execute()
-    else:
-        supabase.table("daily_logs").insert({
-            "log_date": selected_date,
-            "ai_comment": comment,
-            "updated_at": datetime.utcnow().isoformat()
-        }).execute()
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
 
-    return jsonify({"comment": comment})
+    resend_email_id = result.get("id")
 
-
-@app.get("/api/history")
-def history():
-    ensure_db()
-    rows = safe_rows(
-        supabase.table("daily_logs")
-        .select("log_date,weight,ai_comment")
-        .order("log_date", desc=True)
-        .limit(60)
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "email_sent_at": datetime.now(timezone.utc).isoformat(),
+                "resend_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
         .execute()
     )
-    return jsonify(rows)
+
+    return resend_email_id
 
 
-@app.get("/api/weights")
-def weights():
-    ensure_db()
-    rows = safe_rows(
-        supabase.table("daily_logs")
-        .select("log_date,weight")
-        .not_.is_("weight", "null")
-        .order("log_date")
-        .limit(365)
+def send_bank_transfer_instruction_email(application_id):
+    """銀行振込を選択した申込者へ振込先案内メールを送信する。"""
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,name,handle,email,payment_method,payment_status,"
+            "bank_instruction_sent_at,bank_instruction_email_id"
+        )
+        .eq("id", application_id)
+        .limit(1)
         .execute()
     )
-    return jsonify(rows)
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("銀行振込案内用の申込情報が見つかりません。")
+
+    application = rows[0]
+
+    if application.get("bank_instruction_sent_at"):
+        return application.get("bank_instruction_email_id")
+
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = (application.get("email") or "").strip()
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】銀行振込のご案内"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          お申し込みありがとうございます♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+        <p>
+          銀行振込でのお申し込みを受け付けました。<br>
+          参加費 <strong>3,500円</strong> を下記口座へお振り込みください。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>銀行名</strong><br>{BANK_NAME}<br><br>
+          <strong>支店名</strong><br>{BANK_BRANCH}<br><br>
+          <strong>口座種別</strong><br>{BANK_ACCOUNT_TYPE}<br><br>
+          <strong>口座番号</strong><br>{BANK_ACCOUNT_NUMBER}<br><br>
+          <strong>口座名義</strong><br>{BANK_ACCOUNT_NAME}<br><br>
+          <strong>お振込金額</strong><br>3,500円<br><br>
+          <strong>振込期限</strong><br>{BANK_TRANSFER_DEADLINE_TEXT}
+        </div>
+
+        <p>
+          お振込名義は、可能な限りお申し込み時のお名前と同じ名義でお願いいたします。<br>
+          振込期限は <strong>{BANK_TRANSFER_DEADLINE_TEXT}</strong> です。<br>
+          入金確認後、改めてお支払い完了メールをお送りします。
+        </p>
+
+        <p style="font-size:13px;color:#8f6d7e;">
+          ※振込手数料が発生する場合はご負担をお願いいたします。<br>
+          ※入金確認にはお時間をいただく場合があります。
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [applicant_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
+            "Idempotency-Key": f"shisha-bank-{application_id}",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
+
+    resend_email_id = result.get("id")
+
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "bank_instruction_sent_at": datetime.now(timezone.utc).isoformat(),
+                "bank_instruction_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
+        .execute()
+    )
+
+    return resend_email_id
 
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return redirect(url_for("admin_login"))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def send_bank_payment_confirmation_email(application_id):
+    """銀行振込の入金確認後、参加者へ支払い完了メールを送信。"""
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY が設定されていません。")
+
+    response = (
+        supabase.table("event_applications")
+        .select("id,name,handle,email,payment_status,email_sent_at,resend_email_id")
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise RuntimeError("申込情報が見つかりません。")
+
+    application = rows[0]
+    applicant_name = application.get("name") or application.get("handle") or "参加者"
+    applicant_email = (application.get("email") or "").strip()
+
+    if not applicant_email or "@" not in applicant_email:
+        raise RuntimeError("申込者のメールアドレスが不正です。")
+
+    subject = "【あめ × じゃない方 シーシャオフ会】ご入金確認のお知らせ"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Yu Gothic',sans-serif;
+                color:#4a2f3d;line-height:1.8;max-width:620px;margin:auto;">
+      <div style="background:#fff2f8;border:1px solid #efb8d1;border-radius:22px;padding:28px;">
+        <div style="text-align:center;font-size:28px;font-weight:700;margin-bottom:8px;">
+          ご入金を確認しました♡
+        </div>
+        <div style="text-align:center;color:#d96b9c;font-weight:700;margin-bottom:24px;">
+          あめ × じゃない方 シーシャオフ会
+        </div>
+
+        <p>{applicant_name} 様</p>
+        <p>
+          銀行振込での参加費 <strong>3,500円</strong> のご入金を確認しました。<br>
+          お申し込みは完了です。
+        </p>
+
+        <div style="background:#ffffff;border:1px dashed #efb8d1;border-radius:16px;
+                    padding:18px;margin:22px 0;">
+          <strong>開催日</strong><br>
+          2026年10月18日<br><br>
+          <strong>会場</strong><br>
+          亀戸シーシャ Eighty -80-<br><br>
+          <strong>参加費</strong><br>
+          3,500円（お支払い済み）
+        </div>
+
+        <p>
+          当日は喫煙目的店への入店となるため、
+          <strong>身分証明書を必ずお持ちください。</strong>
+        </p>
+
+        <p style="text-align:center;margin-top:28px;color:#d96b9c;font-weight:700;">
+          まったりシーシャしよ？♡
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [applicant_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "shisha-offkai/1.0",
+            "Idempotency-Key": f"shisha-bank-paid-{application_id}",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Resend connection error: {exc}") from exc
+
+    resend_email_id = result.get("id")
+
+    (
+        supabase.table("event_applications")
+        .update(
+            {
+                "email_sent_at": datetime.now(timezone.utc).isoformat(),
+                "resend_email_id": resend_email_id,
+            }
+        )
+        .eq("id", application_id)
+        .execute()
+    )
+
+    return resend_email_id
+
+
+
+def is_bank_transfer_open():
+    """銀行振込受付が期限内か判定（日本時間の日付基準）。"""
+    japan_today = datetime.now(timezone.utc).astimezone(
+        __import__("zoneinfo").ZoneInfo("Asia/Tokyo")
+    ).date()
+    return japan_today <= BANK_TRANSFER_DEADLINE
+
+
+def get_capacity_status():
+    """paid + bank_transfer_pending を参加枠として数える。"""
+    require_supabase()
+    url = f"{SUPABASE_URL}/rest/v1/event_applications"
+    params = urllib.parse.urlencode({
+        "select": "id,payment_status",
+        "payment_status": "in.(paid,bank_transfer_pending)",
+    })
+    req = urllib_request.Request(
+        f"{url}?{params}",
+        headers={
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+        },
+        method="GET",
+    )
+    with urllib_request.urlopen(req, timeout=20) as resp:
+        rows = json.loads(resp.read().decode("utf-8") or "[]")
+    reserved = len(rows)
+    return {
+        "capacity": EVENT_CAPACITY,
+        "reserved_count": reserved,
+        "remaining": max(EVENT_CAPACITY - reserved, 0),
+        "is_full": reserved >= EVENT_CAPACITY,
+    }
+
+
+@app.get("/")
+def index():
+    capacity = get_capacity_status()
+    return render_template("index.html", capacity=capacity)
+
+
+@app.get("/apply")
+def apply():
+    capacity = get_capacity_status()
+    if capacity["is_full"]:
+        return render_template("full.html", capacity=capacity)
+    return render_template("apply.html", capacity=capacity)
+
+
+@app.get("/confirm")
+def confirm():
+    return render_template("confirm.html")
+
+
+@app.get("/payment")
+def payment():
+    return render_template("payment.html")
+
+
+@app.post("/api/applications")
+def api_create_application():
+    try:
+        require_supabase()
+        capacity = get_capacity_status()
+        if capacity["is_full"]:
+            return jsonify(
+                error="定員20名に達したため、受付を終了しました。",
+                full=True
+            ), 409
+        data = request.get_json(silent=True) or {}
+
+        required_text = ["name", "handle", "email", "phone"]
+        for field in required_text:
+            if not str(data.get(field, "")).strip():
+                return jsonify(error=f"{field} が未入力です。"), 400
+
+        required_consents = [
+            "age_confirmed",
+            "id_required_confirmed",
+            "cancellation_confirmed",
+            "privacy_confirmed",
+        ]
+        if not all(data.get(k) is True for k in required_consents):
+            return jsonify(error="注意事項への同意を確認できません。"), 400
+
+        payload = {
+            "name": str(data["name"]).strip()[:100],
+            "handle": str(data["handle"]).strip()[:100],
+            "email": str(data["email"]).strip()[:254],
+            "phone": str(data["phone"]).strip()[:30],
+            "x_account": str(data.get("xid", "")).strip()[:100] or None,
+            "age_confirmed": True,
+            "id_required_confirmed": True,
+            "cancellation_confirmed": True,
+            "privacy_confirmed": True,
+            "payment_status": "unpaid",
+        }
+
+        response = supabase.table("event_applications").insert(payload).execute()
+        rows = response.data or []
+        if not rows:
+            return jsonify(error="申込情報を保存できませんでした。"), 500
+
+        return jsonify(application_id=rows[0]["id"])
+
+    except Exception as exc:
+        app.logger.exception("application insert failed")
+        return jsonify(error=f"申込情報の保存に失敗しました: {exc}"), 500
+
+
+@app.get("/bank-transfer")
+def bank_transfer():
+    try:
+        require_supabase()
+
+        if not is_bank_transfer_open():
+            return render_template(
+                "bank_transfer_closed.html",
+                deadline=BANK_TRANSFER_DEADLINE_TEXT
+            ), 410
+
+        application_id = (request.args.get("application_id") or "").strip()
+        if not application_id:
+            return "application_id がありません。参加申し込みからやり直してください。", 400
+
+        response = (
+            supabase.table("event_applications")
+            .select("id,email,payment_status,payment_method")
+            .eq("id", application_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return "申込情報が見つかりません。", 404
+
+        (
+            supabase.table("event_applications")
+            .update(
+                {
+                    "payment_method": "bank",
+                    "payment_status": "bank_transfer_pending",
+                    "bank_transfer_requested_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", application_id)
+            .execute()
+        )
+
+        email_error = None
+        try:
+            send_bank_transfer_instruction_email(application_id)
+        except Exception as exc:
+            app.logger.exception("bank transfer instruction email failed")
+            email_error = str(exc)
+
+        return render_template(
+            "bank_transfer.html",
+            application_id=application_id,
+            bank_name=BANK_NAME,
+            bank_branch=BANK_BRANCH,
+            bank_account_type=BANK_ACCOUNT_TYPE,
+            bank_account_number=BANK_ACCOUNT_NUMBER,
+            bank_account_name=BANK_ACCOUNT_NAME,
+            price=EVENT_PRICE,
+            deadline=BANK_TRANSFER_DEADLINE_TEXT,
+            email_error=email_error,
+        )
+
+    except Exception as exc:
+        app.logger.exception("bank transfer setup failed")
+        return f"銀行振込の受付処理に失敗しました: {exc}", 500
+
+
+@app.get("/create-checkout-session")
+def create_checkout_session():
+    if not stripe.api_key:
+        return (
+            "STRIPE_SECRET_KEY が設定されていません。"
+            "Render の Environment Variables に sk_test_... を登録してください。",
+            500,
+        )
+
+    try:
+        require_supabase()
+
+        application_id = (request.args.get("application_id") or "").strip()
+        if not application_id:
+            return "application_id がありません。参加申し込みからやり直してください。", 400
+
+        response = (
+            supabase.table("event_applications")
+            .select("id,email,payment_status")
+            .eq("id", application_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return "申込情報が見つかりません。", 404
+
+        application = rows[0]
+        base_url = request.url_root.rstrip("/")
+
+        checkout_session = stripe.checkout.Session.create(
+            mode="payment",
+            client_reference_id=application_id,
+            customer_email=application["email"],
+            metadata={
+                "application_id": application_id,
+                "event": "ame_janaihou_shisha_2026_10_18",
+            },
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "jpy",
+                        "product_data": {
+                            "name": EVENT_NAME,
+                            "description": "2026年10月18日 / 亀戸シーシャ Eighty -80-",
+                        },
+                        "unit_amount": EVENT_PRICE,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            success_url=base_url + "/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=base_url + "/cancel",
+        )
+
+        (
+            supabase.table("event_applications")
+            .update(
+                {
+                    "payment_method": "card",
+                    "payment_status": "pending",
+                    "stripe_checkout_session_id": checkout_session.id,
+                }
+            )
+            .eq("id", application_id)
+            .execute()
+        )
+
+        return redirect(checkout_session.url, code=303)
+
+    except Exception as exc:
+        app.logger.exception("checkout create failed")
+        return f"決済画面の作成に失敗しました: {exc}", 500
+
+
+@app.get("/success")
+def success():
+    session_id = (request.args.get("session_id") or "").strip()
+
+    if session_id and stripe.api_key and supabase is not None:
+        try:
+            checkout_session = stripe.checkout.Session.retrieve(session_id)
+            application_id = checkout_session.client_reference_id
+
+            # Stripe APIから支払い済みを確認できたときだけDBをpaidにする。
+            # 次の段階でWebhookも追加し、購入者がこの画面へ戻らなくても
+            # 入金状態を反映できるようにする。
+            if application_id and checkout_session.payment_status == "paid":
+                mark_application_paid(application_id, checkout_session)
+        except Exception:
+            app.logger.exception("success verification failed")
+
+    return render_template("success.html")
+
+
+@app.post("/webhook")
+def stripe_webhook():
+    """
+    StripeからのWebhookを署名検証して受信。
+    checkout.session.completed のうち payment_status == paid の場合のみ
+    申込レコードを paid に更新する。
+    """
+    if not STRIPE_WEBHOOK_SECRET:
+        app.logger.error("STRIPE_WEBHOOK_SECRET is not configured")
+        return "Webhook secret is not configured", 500
+
+    try:
+        require_supabase()
+    except Exception:
+        app.logger.exception("Supabase is not configured")
+        return "Supabase is not configured", 500
+
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=STRIPE_WEBHOOK_SECRET,
+        )
+    except ValueError:
+        app.logger.warning("Invalid webhook payload")
+        return "Invalid payload", 400
+    except stripe.error.SignatureVerificationError:
+        app.logger.warning("Invalid Stripe webhook signature")
+        return "Invalid signature", 400
+
+    if event["type"] == "checkout.session.completed":
+        checkout_session = event["data"]["object"]
+
+        application_id = (
+            checkout_session.get("client_reference_id")
+            or (checkout_session.get("metadata") or {}).get("application_id")
+        )
+
+        # カード決済ではcompleted時点でpaidになる。
+        # 支払状態を再確認し、未払いならDBをpaidにしない。
+        if application_id and checkout_session.get("payment_status") == "paid":
+            try:
+                mark_application_paid(application_id, checkout_session)
+                app.logger.info(
+                    "Webhook paid application updated: %s / session: %s",
+                    application_id,
+                    checkout_session.get("id"),
+                )
+
+                resend_email_id = send_payment_confirmation_email(application_id)
+                app.logger.info(
+                    "Payment confirmation email sent: application=%s / resend=%s",
+                    application_id,
+                    resend_email_id,
+                )
+            except Exception:
+                app.logger.exception("Webhook Supabase update failed")
+                # DB更新またはメール送信に失敗した場合はStripeに再送してもらうため5xx
+                return "Post-payment processing failed", 500
+
+    # 未処理イベントも正常受信として200を返す
+    return jsonify(received=True), 200
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    error = None
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+
+        if not ADMIN_PASSWORD:
+            error = "ADMIN_PASSWORD がRenderに設定されていません。"
+        elif password == ADMIN_PASSWORD:
+            session["admin_logged_in"] = True
+            return redirect(url_for("admin_dashboard"))
+        else:
+            error = "パスワードが違います。"
+
+    return render_template("admin_login.html", error=error)
+
+
+@app.get("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect(url_for("admin_login"))
+
+
+@app.get("/admin")
+@admin_required
+def admin_dashboard():
+    require_supabase()
+
+    response = (
+        supabase.table("event_applications")
+        .select(
+            "id,created_at,name,handle,email,phone,x_account,"
+            "payment_method,payment_status,paid_at,bank_transfer_requested_at"
+        )
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    applications = response.data or []
+    bank_pending = [
+        row for row in applications
+        if row.get("payment_method") == "bank"
+        and row.get("payment_status") == "bank_transfer_pending"
+    ]
+
+    paid_count = sum(1 for row in applications if row.get("payment_status") == "paid")
+    reserved_count = sum(
+        1 for row in applications
+        if row.get("payment_status") in ("paid", "bank_transfer_pending")
+    )
+    remaining_count = max(EVENT_CAPACITY - reserved_count, 0)
+
+    return render_template(
+        "admin.html",
+        applications=applications,
+        bank_pending=bank_pending,
+        paid_count=paid_count,
+        total_count=len(applications),
+        reserved_count=reserved_count,
+        remaining_count=remaining_count,
+        event_capacity=EVENT_CAPACITY,
+    )
+
+
+@app.post("/admin/bank/<application_id>/confirm")
+@admin_required
+def admin_confirm_bank_payment(application_id):
+    try:
+        require_supabase()
+
+        response = (
+            supabase.table("event_applications")
+            .select("id,payment_method,payment_status")
+            .eq("id", application_id)
+            .limit(1)
+            .execute()
+        )
+
+        rows = response.data or []
+        if not rows:
+            return redirect(url_for("admin_dashboard", error="not_found"))
+
+        application = rows[0]
+
+        if application.get("payment_method") != "bank":
+            return redirect(url_for("admin_dashboard", error="not_bank"))
+
+        if application.get("payment_status") == "paid":
+            return redirect(url_for("admin_dashboard", message="already_paid"))
+
+        paid_at = datetime.now(timezone.utc).isoformat()
+
+        (
+            supabase.table("event_applications")
+            .update(
+                {
+                    "payment_status": "paid",
+                    "paid_at": paid_at,
+                }
+            )
+            .eq("id", application_id)
+            .execute()
+        )
+
+        send_bank_payment_confirmation_email(application_id)
+
+        return redirect(url_for("admin_dashboard", message="paid"))
+
+    except Exception:
+        app.logger.exception("admin bank confirm failed")
+        return redirect(url_for("admin_dashboard", error="confirm_failed"))
+
+
+@app.get("/cancel")
+def cancel():
+    return render_template("cancel.html")
 
 
 if __name__ == "__main__":
