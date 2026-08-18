@@ -69,7 +69,7 @@ th{color:var(--muted);font-size:11px}
         <div class="person-head">
           <div>
             <div class="name">{{ row.name }} <span style="font-weight:400">（{{ row.handle }}）</span></div>
-            <div class="meta">{{ row.email }}<br>申込日時：{{ row.created_at }}</div>
+            <div class="meta">{{ row.email }}<br>申込日時：{{ row.created_at|jst }}</div>
           </div>
           <form method="post" action="{{ url_for('admin_confirm_bank_payment', application_id=row.id) }}" onsubmit="return confirm('この方の3,500円の入金を確認済みにしますか？');">
             <button class="confirm" type="submit">入金確認済みにする</button>
@@ -103,8 +103,8 @@ th{color:var(--muted);font-size:11px}
                 <span class="badge unpaid">{{ row.payment_status }}</span>
               {% endif %}
             </td>
-            <td>{{ row.created_at }}</td>
-            <td>{{ row.paid_at or '-' }}</td>
+            <td>{{ row.created_at|jst }}</td>
+            <td>{{ row.paid_at|jst }}</td>
           </tr>
         {% endfor %}
         </tbody>

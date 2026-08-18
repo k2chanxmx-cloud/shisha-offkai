@@ -3,6 +3,7 @@ from functools import wraps
 import json
 import urllib.parse
 from datetime import datetime, timezone, date
+from zoneinfo import ZoneInfo
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -11,6 +12,26 @@ import stripe
 from supabase import create_client
 
 app = Flask(__name__)
+
+@app.template_filter("jst")
+def format_jst(value):
+    """Supabase等のISO 8601日時を日本時間 YYYY/MM/DD HH:MM で表示する。"""
+    if value is None or value == "":
+        return "-"
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%Y/%m/%d %H:%M")
+    except Exception:
+        return str(value)
+
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-change-me")
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
