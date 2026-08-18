@@ -1,9 +1,9 @@
 import os
 from functools import wraps
 import json
+import urllib.parse
 from datetime import datetime, timezone, date
 from urllib import request as urllib_request
-from urllib import parse as urllib_parse
 from urllib.error import HTTPError, URLError
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -463,7 +463,7 @@ def get_capacity_status():
     """paid + bank_transfer_pending を参加枠として数える。"""
     require_supabase()
     url = f"{SUPABASE_URL}/rest/v1/event_applications"
-    params = urllib_parse.urlencode({
+    params = urllib.parse.urlencode({
         "select": "id,payment_status",
         "payment_status": "in.(paid,bank_transfer_pending)",
     })
