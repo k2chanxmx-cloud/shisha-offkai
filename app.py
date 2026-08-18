@@ -1,7 +1,7 @@
 import os
 from functools import wraps
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -28,6 +28,8 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
 EVENT_NAME = "あめ × じゃない方 シーシャオフ会"
 EVENT_PRICE = 3500
 EVENT_CAPACITY = 20
+BANK_TRANSFER_DEADLINE = date(2026, 10, 1)
+BANK_TRANSFER_DEADLINE_TEXT = "2026年10月1日"
 
 BANK_NAME = "三菱UFJ銀行"
 BANK_BRANCH = "浦和支店"
@@ -260,11 +262,13 @@ def send_bank_transfer_instruction_email(application_id):
           <strong>口座種別</strong><br>{BANK_ACCOUNT_TYPE}<br><br>
           <strong>口座番号</strong><br>{BANK_ACCOUNT_NUMBER}<br><br>
           <strong>口座名義</strong><br>{BANK_ACCOUNT_NAME}<br><br>
-          <strong>お振込金額</strong><br>3,500円
+          <strong>お振込金額</strong><br>3,500円<br><br>
+          <strong>振込期限</strong><br>{BANK_TRANSFER_DEADLINE_TEXT}
         </div>
 
         <p>
           お振込名義は、可能な限りお申し込み時のお名前と同じ名義でお願いいたします。<br>
+          振込期限は <strong>{BANK_TRANSFER_DEADLINE_TEXT}</strong> です。<br>
           入金確認後、改めてお支払い完了メールをお送りします。
         </p>
 
@@ -446,6 +450,14 @@ def send_bank_payment_confirmation_email(application_id):
 
 
 
+def is_bank_transfer_open():
+    """銀行振込受付が期限内か判定（日本時間の日付基準）。"""
+    japan_today = datetime.now(timezone.utc).astimezone(
+        __import__("zoneinfo").ZoneInfo("Asia/Tokyo")
+    ).date()
+    return japan_today <= BANK_TRANSFER_DEADLINE
+
+
 def get_capacity_status():
     """paid + bank_transfer_pending を参加枠として数える。"""
     require_supabase()
@@ -553,6 +565,12 @@ def bank_transfer():
     try:
         require_supabase()
 
+        if not is_bank_transfer_open():
+            return render_template(
+                "bank_transfer_closed.html",
+                deadline=BANK_TRANSFER_DEADLINE_TEXT
+            ), 410
+
         application_id = (request.args.get("application_id") or "").strip()
         if not application_id:
             return "application_id がありません。参加申し込みからやり直してください。", 400
@@ -597,6 +615,7 @@ def bank_transfer():
             bank_account_number=BANK_ACCOUNT_NUMBER,
             bank_account_name=BANK_ACCOUNT_NAME,
             price=EVENT_PRICE,
+            deadline=BANK_TRANSFER_DEADLINE_TEXT,
             email_error=email_error,
         )
 

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>銀行振込受付終了｜あめ × じゃない方 シーシャオフ会</title>
+<style>
+:root{--pink:#ef8fbb;--rose:#d96b9c;--ink:#4a2f3d;--muted:#8f6d7e;--line:#efb8d1}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;font-family:"Yu Gothic","Hiragino Kaku Gothic ProN",system-ui,sans-serif;background:linear-gradient(180deg,#fff8fb,#ffeef6);color:var(--ink)}
+.card{width:min(560px,100%);background:#fff;border:1px solid var(--line);border-radius:28px;padding:32px 22px;text-align:center;box-shadow:0 18px 45px rgba(183,104,143,.14)}
+.mark{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;margin:0 auto 16px;background:linear-gradient(135deg,#ffd7e9,#f3a5c8);font-size:32px}
+h1{font-size:30px;margin:0 0 10px}.lead{color:var(--rose);font-weight:900}.box{margin:22px 0;padding:18px;border-radius:18px;background:#fff7fa;border:1px dashed var(--line);line-height:1.8}
+a{display:block;margin-top:22px;text-decoration:none;color:#fff;font-weight:800;padding:15px;border-radius:999px;background:linear-gradient(135deg,var(--pink),var(--rose))}
+</style>
+</head>
+<body>
+<section class="card">
+  <div class="mark">🏦</div>
+  <h1>銀行振込受付終了</h1>
+  <div class="lead">振込期限は {{ deadline }} までです</div>
+  <div class="box">
+    銀行振込でのお申し込み受付は終了しました。<br>
+    クレジットカード決済をご利用ください。
+  </div>
+  <a href="{{ url_for('index') }}">TOPへ戻る</a>
+</section>
+</body>
+</html>
